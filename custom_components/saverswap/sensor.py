@@ -30,11 +30,16 @@ class DownloadSensor(SaverSwapEntity, SensorEntity):
         busy = [j for j in self.data.get("jobs", []) if j["status"] != "failed"]
         if not busy:
             return "Idle"
-        return f"{busy[0]['name'] or 'Video'}: {busy[0]['status']}" + (f" (+{len(busy) - 1})" if len(busy) > 1 else "")
+        j = busy[0]
+        pct = f" {j['progress']}%" if isinstance(j.get("progress"), int) else ""
+        return f"{j['name'] or 'Video'}: {j['status']}{pct}" + (f" (+{len(busy) - 1} more)" if len(busy) > 1 else "")
 
     @property
     def extra_state_attributes(self) -> dict:
-        return {"failed": [f"{j['name'] or j['url']}: {j['error']}"
+        busy = [j for j in self.data.get("jobs", []) if j["status"] != "failed"]
+        return {"progress": busy[0].get("progress") if busy else None,
+                "queued": len(busy),
+                "failed": [f"{j['name'] or j['url']}: {j['error']}"
                            for j in self.data.get("jobs", []) if j["status"] == "failed"]}
 
 

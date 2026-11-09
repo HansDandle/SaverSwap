@@ -52,8 +52,17 @@
   .toggles { display: grid; gap: 10px; }
   .toggles label { display: flex; align-items: center; gap: 10px; cursor: pointer; }
   .toggles input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
-  ul.jobs { margin: 8px 0 0; padding-left: 18px; }
+  ul.jobs { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 10px; }
   ul.jobs li.failed { color: var(--danger); }
+  .jobrow { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+  .jobname { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar { height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; position: relative; }
+  .bar span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .6s; }
+  .bar.indeterminate span { width: 35%; position: absolute; animation: slide 1.4s ease-in-out infinite; }
+  @keyframes slide { from { left: -35%; } to { left: 100%; } }
+  .scene.adding .ph { aspect-ratio: 16/9; display: flex; flex-direction: column; justify-content: center;
+                      gap: 10px; padding: 0 16px; background: var(--soft); }
+  .scene.adding .bar-label { padding: 8px 10px; font-weight: 600; }
   .found { display: grid; gap: 6px; margin-top: 8px; }
   .hidden { display: none !important; }
   dialog { max-width: 560px; width: calc(100% - 32px); border: 1px solid var(--border); border-radius: 14px;
@@ -303,6 +312,7 @@ function renderScenes() {
     };
     box.appendChild(el);
   }
+  jobCards(box);
   const left = data.starter_left;
   $("#starter").classList.toggle("hidden", !left.length);
   $("#starterList").textContent = left.join(", ");
@@ -320,6 +330,11 @@ $("#add").onsubmit = async (e) => {
   refresh();
 };
 
+function jobLabel(j) {
+  const pct = typeof j.progress === "number" ? ` ${j.progress}%` : "";
+  return j.status === "Waiting" ? "Waiting for the one before it" : j.status + pct;
+}
+
 function renderJobs() {
   const ul = $("#jobs");
   ul.innerHTML = "";
@@ -327,9 +342,31 @@ function renderJobs() {
   const shown = [...data.jobs.filter((j) => j.status !== "failed"), ...Object.values(failed)];
   for (const j of shown) {
     const li = document.createElement("li");
-    li.className = j.status === "failed" ? "failed" : "";
-    li.textContent = `${j.name || j.url}: ${j.status === "failed" ? "couldn't add (" + j.error + ")" : j.status + "…"}`;
+    if (j.status === "failed") {
+      li.className = "failed";
+      li.textContent = `${j.name || j.url}: couldn't add (${j.error})`;
+    } else {
+      li.innerHTML = `<div class="jobrow"><span class="jobname"></span><span class="muted small"></span></div>
+        <div class="bar${typeof j.progress === "number" ? "" : " indeterminate"}"><span></span></div>`;
+      li.querySelector(".jobname").textContent = j.name || j.url;
+      li.querySelector(".small").textContent = jobLabel(j);
+      if (typeof j.progress === "number") li.querySelector(".bar span").style.width = j.progress + "%";
+    }
     ul.appendChild(li);
+  }
+}
+
+// placeholder cards in the Scenes grid for videos still being added
+function jobCards(box) {
+  for (const j of data.jobs.filter((x) => x.status !== "failed")) {
+    const el = document.createElement("div");
+    el.className = "scene adding";
+    el.innerHTML = `<div class="ph"><div class="bar${typeof j.progress === "number" ? "" : " indeterminate"}"><span></span></div>
+      <div class="small"></div></div><div class="bar-label"><span class="name"></span></div>`;
+    el.querySelector(".name").textContent = j.name || "New video";
+    el.querySelector(".small").textContent = jobLabel(j);
+    if (typeof j.progress === "number") el.querySelector(".bar span").style.width = j.progress + "%";
+    box.appendChild(el);
   }
 }
 

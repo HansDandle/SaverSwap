@@ -9,9 +9,10 @@
     <children>
         <Rectangle width="1920" height="1080" color="0x000000FF" />
         <Video id="vid" width="1920" height="1080" translation="[0,0]" enableUI="false" focusable="false" />
-        <Rectangle id="box" width="560" height="190" translation="[1330,25]" color="0x00000055" />
-        <Label id="clock" width="600" horizAlign="right" translation="[1260,40]" color="0xFFFFFFFF" />
-        <Label id="weather" width="600" horizAlign="right" translation="[1260,130]" color="0xFFFFFFDD" />
+        <!-- the box is sized to the text in fitBox() -->
+        <Rectangle id="box" width="400" height="190" translation="[1460,25]" color="0x00000055" />
+        <Label id="clock" translation="[1500,40]" color="0xFFFFFFFF" />
+        <Label id="weather" translation="[1500,130]" color="0xFFFFFFDD" />
         <Label id="msg" width="1600" horizAlign="center" translation="[160,980]" color="0xFFFFFF99" />
         <!-- first-run help: shown while no scene is set up yet -->
         <Group id="setup" visible="false">
@@ -102,14 +103,32 @@
             m.clock.visible = showClock
             m.weatherLabel.text = m.fetch.weather
             m.box.visible = showClock or m.fetch.weather <> ""
-            if not showClock
-                m.weatherLabel.translation = [1260, 50]
-                m.box.height = 110
-            else
-                m.weatherLabel.translation = [1260, 130]
-                m.box.height = 190
-            end if
             updateClock()
+        end sub
+
+        ' Right-align the clock and weather at the same edge and wrap the box snugly around them.
+        sub fitBox()
+            right = 1860
+            pad = 32
+            widest = 0
+            y = 40
+            if m.clock.visible
+                w = m.clock.boundingRect().width
+                m.clock.translation = [right - pad - w, y]
+                widest = w
+                y = 130
+            end if
+            if m.weatherLabel.text <> ""
+                w = m.weatherLabel.boundingRect().width
+                m.weatherLabel.translation = [right - pad - w, y]
+                if w > widest then widest = w
+                y = y + 70
+            else
+                y = y + 10
+            end if
+            m.box.width = widest + pad * 2
+            m.box.height = y - 25 + 20
+            m.box.translation = [right - m.box.width, 25]
         end sub
 
         sub onSetup()
@@ -150,6 +169,7 @@
             mm = mins.ToStr()
             if mins < 10 then mm = "0" + mm
             m.clock.text = h.ToStr() + ":" + mm + " " + ampm
+            fitBox()
         end sub
 
         ' If the server hiccups, try again in a few seconds instead of sitting black.

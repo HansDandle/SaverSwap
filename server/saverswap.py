@@ -31,7 +31,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import rokus
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 LOOP_SECONDS = 1200  # files are repeated to ~20 min: the Roku blinks black for ~1 s on each loop
 SEAMLESS_UNDER = 120  # silent clips shorter than this get a crossfaded, seamless loop
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -147,6 +147,42 @@ def run(args, timeout=3600):
     return p.stdout
 
 
+def _hms(text):
+    h, m, s = text.split(":")
+    return int(h) * 3600 + int(m) * 60 + float(s)
+
+
+def run_progress(args, job, total=None, timeout=7200):
+    """Run yt-dlp or ffmpeg and keep job["progress"] (0-100) up to date from its output:
+    yt-dlp's "NN.N%" lines, or ffmpeg's "time=HH:MM:SS" / "out_time=" against total seconds."""
+    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                         text=True, encoding="utf-8", errors="replace")
+    tail, buf, start = [], "", time.time()
+    while True:
+        ch = p.stdout.read(1)
+        if not ch:
+            break
+        if ch not in "\r\n":
+            buf += ch
+            continue
+        line, buf = buf.strip(), ""
+        if not line:
+            continue
+        tail = (tail + [line])[-5:]
+        m = re.search(r"(\d+(?:\.\d+)?)%", line)
+        t = re.search(r"(?:out_time|time)=\s*(\d+:\d\d:\d\d(?:\.\d+)?)", line)
+        if m and "download" in line.lower():
+            # YouTube sends video then audio as two downloads; keep the bar moving forward
+            job["progress"] = max(job.get("progress") or 0, min(100, int(float(m.group(1)))))
+        elif t and total:
+            job["progress"] = min(100, int(_hms(t.group(1)) * 100 / total))
+        if time.time() - start > timeout:
+            p.kill()
+            raise RuntimeError("took too long")
+    if p.wait() != 0:
+        raise RuntimeError((tail or ["failed"])[-1][:300])
+
+
 def probe(path):
     d = json.loads(run(["ffprobe", "-v", "error", "-show_entries",
                         "stream=codec_type,codec_name,height:format=duration", "-of", "json", path], 120))
@@ -174,10 +210,15 @@ def add_video(store, job_id, url, name):
         for f in os.listdir(store.tmp):
             os.remove(os.path.join(store.tmp, f))
         ytdlp = [sys.executable, "-m", "yt_dlp", "--no-playlist", "--js-runtimes", "node,deno"]
-        job["status"] = "Looking up the video"
+        job["status"], job["progress"] = "Looking up the video", None
+        info = run(ytdlp + ["--skip-download", "--print", "%(title)s\t%(duration)s", url], 300)
+        title, _, length = (info.strip().splitlines() or ["Video\tNA"])[0].partition("\t")
+        try:
+            length = float(length)
+        except ValueError:
+            length = None
         if not name:
-            title = run(ytdlp + ["--skip-download", "--print", "title", url], 300).strip().splitlines()
-            name = title[0] if title else "Video"
+            name = title or "Video"
             if re.fullmatch(r"[\w-]*\d[\w-]*", name):  # bare file names like 30252-720
                 name = "Video"
         with _lock:
@@ -185,32 +226,44 @@ def add_video(store, job_id, url, name):
         job["name"] = name
         slug = slugify(name)
 
-        job["status"] = "Downloading"
-        run(ytdlp + ["-f", "bv*[vcodec^=avc1][height<=1080]+ba[ext=m4a]/bv*[height<=1080]+ba"
-                           "/b[height<=1080]/bv*[height<=1080]/b",
-                     "--merge-output-format", "mp4", "--download-sections", f"*0-{LOOP_SECONDS}",
-                     "-o", os.path.join(store.tmp, "dl.%(ext)s"), url])
-        src = os.path.join(store.tmp, next(f for f in os.listdir(store.tmp) if f.startswith("dl.")))
+        job["status"], job["progress"] = "Downloading", 0
+        fmt = ["-f", "bv*[vcodec^=avc1][height<=1080]+ba[ext=m4a]/bv*[height<=1080]+ba"
+                     "/b[height<=1080]/bv*[height<=1080]/b", "--merge-output-format", "mp4", "--newline"]
+        if length is None or length > LOOP_SECONDS + 60:
+            # only the first 20 minutes (yt-dlp hands this to ffmpeg, which reports time=)
+            fmt += ["--download-sections", f"*0-{LOOP_SECONDS}"]
+        run_progress(ytdlp + fmt + ["-o", os.path.join(store.tmp, "dl.%(ext)s"), url], job,
+                     total=min(length or LOOP_SECONDS, LOOP_SECONDS))
+        src = os.path.join(store.tmp, next(f for f in os.listdir(store.tmp)
+                                           if f.startswith("dl.") and not f.endswith(".part")))
 
-        job["status"] = "Converting for the Roku"
+        job["status"], job["progress"] = "Converting for the Roku", 0
         codec, height, dur, has_audio = probe(src)
+        if dur > LOOP_SECONDS + 5:  # short videos were downloaded whole; keep the first 20 minutes
+            trimmed = os.path.join(store.tmp, "trim.mp4")
+            run(["ffmpeg", "-v", "error", "-y", "-i", src, "-t", str(LOOP_SECONDS), "-c", "copy", trimmed])
+            src, dur = trimmed, float(LOOP_SECONDS)
+        prog = ["-progress", "pipe:1", "-nostats"]
         clean = os.path.join(store.tmp, "clean.mp4")
         audio = ["-map", "0:a:0?", "-c:a", "aac", "-b:a", "160k"]  # sound kept; muted unless "Sound" is on
         if not has_audio and dur < SEAMLESS_UNDER:
             # short silent clip: crossfade its end into its start so the repeat is invisible
             fade = min(2.0, dur / 4)
-            run(["ffmpeg", "-v", "error", "-y", "-i", src, "-filter_complex",
-                 f"[0:v]fps=30,scale=-2:'min(1080,ih)',format=yuv420p,split[s1][s2];"
-                 f"[s1]trim={fade}:{dur},setpts=PTS-STARTPTS,settb=AVTB,fps=30[a];"
-                 f"[s2]trim=0:{fade},setpts=PTS-STARTPTS,settb=AVTB,fps=30[b];"
-                 f"[a][b]xfade=transition=fade:duration={fade}:offset={dur - 2 * fade:.3f}[v]",
-                 "-map", "[v]", "-an"] + ENC + [clean])
+            run_progress(["ffmpeg", "-v", "error", "-y", "-i", src, "-filter_complex",
+                          f"[0:v]fps=30,scale=-2:'min(1080,ih)',format=yuv420p,split[s1][s2];"
+                          f"[s1]trim={fade}:{dur},setpts=PTS-STARTPTS,settb=AVTB,fps=30[a];"
+                          f"[s2]trim=0:{fade},setpts=PTS-STARTPTS,settb=AVTB,fps=30[b];"
+                          f"[a][b]xfade=transition=fade:duration={fade}:offset={dur - 2 * fade:.3f}[v]",
+                          "-map", "[v]", "-an"] + ENC + prog + [clean], job, total=dur - fade)
             dur -= fade
         elif codec == "h264" and height <= 1080:
-            run(["ffmpeg", "-v", "error", "-y", "-i", src, "-map", "0:v:0", "-c:v", "copy"] + audio + [clean])
+            run_progress(["ffmpeg", "-v", "error", "-y", "-i", src, "-map", "0:v:0", "-c:v", "copy"]
+                         + audio + prog + [clean], job, total=dur)
         else:
-            run(["ffmpeg", "-v", "error", "-y", "-i", src, "-map", "0:v:0",
-                 "-vf", "scale=-2:'min(1080,ih)',fps=30,format=yuv420p"] + ENC + audio + [clean])
+            run_progress(["ffmpeg", "-v", "error", "-y", "-i", src, "-map", "0:v:0",
+                          "-vf", "scale=-2:'min(1080,ih)',fps=30,format=yuv420p"] + ENC + audio + prog + [clean],
+                         job, total=dur)
+        job["status"], job["progress"] = "Finishing", 100
         loops = max(0, math.ceil(LOOP_SECONDS / dur) - 1) if dur > 0 else 0
         dest = os.path.join(store.videos, slug + ".mp4")
         run(["ffmpeg", "-v", "error", "-y", "-stream_loop", str(loops), "-i", clean,
@@ -234,7 +287,8 @@ _queue = threading.Lock()  # one download at a time
 
 def queue_video(store, url, name, select=True):
     job_id = uuid.uuid4().hex[:8]
-    jobs[job_id] = {"url": url, "name": name or "", "status": "Waiting", "error": None, "select": select}
+    jobs[job_id] = {"url": url, "name": name or "", "status": "Waiting", "error": None, "select": select,
+                    "progress": None}
 
     def work():
         with _queue:
@@ -333,7 +387,7 @@ class Handler(BaseHTTPRequestHandler):
                        "saved_password": bool(r.get("password"))} for r in st["rokus"]],
             "storage": {"path": self.store.dir, "used_gb": round(used / 1e9, 1),
                         "free_gb": round(du.free / 1e9, 1)},
-            "jobs": [dict(id=k, **{x: v[x] for x in ("url", "name", "status", "error")})
+            "jobs": [dict(id=k, progress=v.get("progress"), **{x: v[x] for x in ("url", "name", "status", "error")})
                      for k, v in jobs.items() if v["status"] != "done"],
             "starter_left": [n for n, _ in STARTER if not self.store.find(n)],
             "version": VERSION,
