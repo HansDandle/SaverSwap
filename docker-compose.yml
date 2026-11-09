@@ -1,0 +1,12 @@
+# SaverSwap: run `docker compose up -d`, then open http://<this-computer's-IP>:8099
+# and follow the steps on the page. Everything else is set up there.
+services:
+  saverswap:
+    image: ghcr.io/hansdandle/saverswap:latest
+    container_name: saverswap
+    ports:
+      - "8099:8099"
+    volumes:
+      # Where videos are kept: change ./saverswap-data to any folder you like
+      - ./saverswap-data:/data
+    restart: unless-stopped

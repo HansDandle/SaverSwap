@@ -13,6 +13,13 @@
         <Label id="clock" width="600" horizAlign="right" translation="[1260,40]" color="0xFFFFFFFF" />
         <Label id="weather" width="600" horizAlign="right" translation="[1260,130]" color="0xFFFFFFDD" />
         <Label id="msg" width="1600" horizAlign="center" translation="[160,980]" color="0xFFFFFF99" />
+        <!-- first-run help: shown while no scene is set up yet -->
+        <Group id="setup" visible="false">
+            <Label id="setupTitle" width="1920" horizAlign="center" translation="[0,250]" color="0xFFFFFFFF"
+                   text="Pick a scene for your TV" />
+            <Poster id="qr" width="300" height="300" translation="[810,370]" />
+            <Label id="setupText" width="1920" horizAlign="center" translation="[0,710]" color="0xFFFFFFCC" />
+        </Group>
     </children>
     <script type="text/brightscript"><![CDATA[
         sub init()
@@ -33,6 +40,10 @@
             m.weatherLabel.font = makeFont(44)
             m.msg = m.top.findNode("msg")
             m.msg.font = makeFont(32)
+            m.setup = m.top.findNode("setup")
+            m.top.findNode("setupTitle").font = makeFont(64)
+            m.setupText = m.top.findNode("setupText")
+            m.setupText.font = makeFont(40)
 
             m.now = CreateObject("roDateTime")
             m.tick = CreateObject("roSGNode", "Timer")
@@ -48,6 +59,7 @@
             m.fetch.observeField("clock", "onOverlay")
             m.fetch.observeField("error", "onError")
             m.fetch.observeField("sound", "onSound")
+            m.fetch.observeField("setup", "onSetup")
             m.fetch.control = "run"
             onOverlay()
         end sub
@@ -98,6 +110,15 @@
                 m.box.height = 190
             end if
             updateClock()
+        end sub
+
+        sub onSetup()
+            url = m.fetch.setup
+            m.setup.visible = (url <> "")
+            if url <> ""
+                m.top.findNode("qr").uri = url + "/qr.png?text=" + url
+                m.setupText.text = "Scan with your phone, or open  " + url
+            end if
         end sub
 
         sub onSound()

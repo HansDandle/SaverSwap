@@ -3,10 +3,13 @@ FROM python:3.12-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ffmpeg nodejs \
  && rm -rf /var/lib/apt/lists/*
-RUN pip install --no-cache-dir "yt-dlp[default]"
+COPY server/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
 WORKDIR /app
-COPY saverswap.py index.html ./
-ENV SAVERSWAP_DATA=/data
+COPY server/saverswap.py server/rokus.py server/index.html ./
+# The Roku app, so the web page can install it on the TV
+COPY roku ./roku
+ENV SAVERSWAP_DATA=/data PYTHONUNBUFFERED=1
 EXPOSE 8099
 VOLUME /data
 CMD ["python", "saverswap.py"]

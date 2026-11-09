@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Background polling (network calls can't run on the render thread):
-     the current scene from the SaverSwap server every minute, and the weather
-     from Open-Meteo every 15 minutes when the server has a location set. -->
+<!-- Background polling (network calls can't run on the render thread): the current
+     scene and settings from the SaverSwap server every 10 seconds, and the weather
+     from Open-Meteo every 15 minutes when a location is set. -->
 <component name="FetchTask" extends="Task">
     <interface>
         <field id="video" type="string" />
@@ -9,6 +9,8 @@
         <field id="sound" type="boolean" value="false" />
         <field id="weather" type="string" />
         <field id="error" type="string" />
+        <!-- web page address, set while there's nothing to play yet -->
+        <field id="setup" type="string" />
     </interface>
     <script type="text/brightscript"><![CDATA[
         sub init()
@@ -42,45 +44,42 @@
         sub run()
             cfg = ParseJson(ReadAsciiFile("pkg:/config.json"))
             server = cfg.server
-            minutes = 15
+            lastWeather = -1000
+            tick = 0
             while true
                 s = getJson(server + "/api/scene")
                 if s = invalid
-                    m.top.error = "Can't reach the SaverSwap server at " + server
+                    if m.top.error = "" then m.top.error = "Can't reach SaverSwap at " + server + ". Is that computer on?"
                 else
-                    m.top.error = ""
-                    if s.video <> invalid and s.video <> m.top.video then m.top.video = s.video
+                    if m.top.error <> "" then m.top.error = ""
+                    if s.video = invalid
+                        if m.top.setup <> s.setup_url then m.top.setup = s.setup_url
+                    else
+                        if m.top.setup <> "" then m.top.setup = ""
+                        if s.video <> m.top.video then m.top.video = s.video
+                    end if
                     o = s.overlay
                     if o <> invalid
-                        m.top.clock = (o.clock = true)
-                        snd = (o.sound = true)
-                        if snd <> m.top.sound then m.top.sound = snd
-                        if o.weather = true and minutes >= 15
-                            url = "https://api.open-meteo.com/v1/forecast?latitude=" + Str(o.lat).Trim() + "&longitude=" + Str(o.lon).Trim() + "&current=temperature_2m,weather_code&temperature_unit=" + o.units
-                            w = getJson(url)
-                            if w <> invalid and w.current <> invalid
-                                t = Int(w.current.temperature_2m + 0.5)
-                                m.top.weather = t.ToStr() + Chr(176) + "  " + describe(w.current.weather_code)
-                                minutes = 0
+                        if (o.clock = true) <> m.top.clock then m.top.clock = (o.clock = true)
+                        if (o.sound = true) <> m.top.sound then m.top.sound = (o.sound = true)
+                        if o.weather = true
+                            if tick - lastWeather >= 90
+                                url = "https://api.open-meteo.com/v1/forecast?latitude=" + Str(o.lat).Trim() + "&longitude=" + Str(o.lon).Trim() + "&current=temperature_2m,weather_code&temperature_unit=" + o.units
+                                w = getJson(url)
+                                if w <> invalid and w.current <> invalid
+                                    t = Int(w.current.temperature_2m + 0.5)
+                                    m.top.weather = t.ToStr() + Chr(176) + "  " + describe(w.current.weather_code)
+                                    lastWeather = tick
+                                end if
                             end if
-                        else if o.weather <> true
+                        else if m.top.weather <> ""
                             m.top.weather = ""
+                            lastWeather = -1000
                         end if
                     end if
                 end if
-                ' check every 10 s so scene/sound changes show up quickly
-                for i = 1 to 6
-                    sleep(10000)
-                    s = getJson(server + "/api/scene")
-                    if s <> invalid
-                        if s.video <> invalid and s.video <> m.top.video then m.top.video = s.video
-                        if s.overlay <> invalid
-                            snd = (s.overlay.sound = true)
-                            if snd <> m.top.sound then m.top.sound = snd
-                        end if
-                    end if
-                end for
-                minutes = minutes + 1
+                sleep(10000)
+                tick = tick + 1
             end while
         end sub
     ]]></script>

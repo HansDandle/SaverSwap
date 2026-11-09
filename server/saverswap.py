@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""SaverSwap server: hosts screensaver videos for the SaverSwap Roku app.
+"""SaverSwap server: turns any video into a Roku's idle screen.
 
-  * web page (/) to pick the scene, add a video from a link (YouTube or any
-    page/file yt-dlp understands, or a plain .mp4), and delete scenes
-  * JSON API for the Roku app and for Home Assistant
-  * serves the videos (with HTTP Range support) and thumbnails
+  * web page (/) to set everything up: find the Roku, open Developer Mode,
+    install the app, pick scenes, add videos from links, sound, weather, clock
+  * watches each Roku and launches the SaverSwap app the moment the Roku's own
+    screensaver starts (Roku doesn't allow video inside real screensavers)
+  * JSON API for the Roku app and Home Assistant; serves videos (with Range
+    support) and thumbnails
 
-Needs Python 3.9+, ffmpeg/ffprobe on PATH, and yt-dlp (pip install "yt-dlp[default]")
-for adding videos from links. Everything is kept in the data folder.
+Needs Python 3.9+, ffmpeg/ffprobe on PATH, and yt-dlp (pip install "yt-dlp[default]").
+Everything is kept in the data folder.
 """
 import argparse
 import json
@@ -21,21 +23,47 @@ import sys
 import threading
 import time
 import unicodedata
+import urllib.parse
 import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
+import rokus
+
+VERSION = "1.2.0"
 LOOP_SECONDS = 1200  # files are repeated to ~20 min: the Roku blinks black for ~1 s on each loop
+SEAMLESS_UNDER = 120  # silent clips shorter than this get a crossfaded, seamless loop
 HERE = os.path.dirname(os.path.abspath(__file__))
+APP_DIR = next((p for p in (os.path.join(HERE, "roku"), os.path.join(HERE, "..", "roku"))
+                if os.path.isfile(os.path.join(p, "manifest"))), None)
 _lock = threading.Lock()
 jobs = {}  # id -> {"url", "name", "status", "error"}
+
+# Free clips from Mixkit (mixkit.co, free license). Downloaded from Mixkit when the
+# user asks for the starter pack; nothing is redistributed with SaverSwap.
+STARTER = [
+    ("Aquarium", "https://assets.mixkit.co/videos/14490/14490-720.mp4"),
+    ("Fireplace", "https://assets.mixkit.co/videos/30252/30252-720.mp4"),
+    ("Rain on the window", "https://assets.mixkit.co/videos/2846/2846-720.mp4"),
+    ("Beach", "https://assets.mixkit.co/videos/1925/1925-720.mp4"),
+    ("Snowfall", "https://assets.mixkit.co/videos/3352/3352-720.mp4"),
+]
+
+DEFAULTS = {
+    "current": None, "scenes": [],
+    "sound": False,        # play the video's sound on the TV
+    "autostart": True,     # launch when the Roku's screensaver starts
+    "rokus": [],           # [{"ip", "name", "model", "password"}]
+    "place": None, "lat": None, "lon": None,  # weather location
+    "units": "fahrenheit", "clock": True, "weather": True,
+}
 
 
 # ---------------------------------------------------------------- state
 
 class Store:
-    def __init__(self, data_dir, settings):
+    def __init__(self, data_dir, seed):
         self.dir = os.path.abspath(data_dir)
         self.videos = os.path.join(self.dir, "videos")
         self.thumbs = os.path.join(self.dir, "thumbs")
@@ -43,13 +71,18 @@ class Store:
         for d in (self.videos, self.thumbs, self.tmp):
             os.makedirs(d, exist_ok=True)
         self.path = os.path.join(self.dir, "state.json")
-        self.settings = settings
-        self.state = {"current": None, "scenes": []}
+        self.state = {}
         if os.path.exists(self.path):
             with open(self.path, encoding="utf-8") as f:
                 self.state = json.load(f)
-        self.state.setdefault("sound", False)      # play the video's sound on the TV
-        self.state.setdefault("autostart", True)   # launch when the Roku's screensaver starts
+        for k, v in DEFAULTS.items():
+            if k not in self.state:
+                self.state[k] = seed.get(k, v) if seed.get(k) is not None else v
+        # Rokus given on the command line / environment are added if new
+        known = {r["ip"] for r in self.state["rokus"]}
+        for ip in seed.get("roku_ips", []):
+            if ip not in known:
+                self.state["rokus"].append({"ip": ip, "name": ip, "model": "", "password": ""})
         self.scan()
 
     def save(self):
@@ -59,14 +92,13 @@ class Store:
         os.replace(tmp, self.path)
 
     def scan(self):
-        """Pick up .mp4 files dropped into videos/ by hand; forget deleted ones."""
+        """Pick up .mp4 files dropped into videos/ by hand; forget deleted ones; make thumbnails."""
         with _lock:
             known = {s["slug"] for s in self.state["scenes"]}
             for fn in sorted(os.listdir(self.videos)):
                 slug, ext = os.path.splitext(fn)
                 if ext.lower() == ".mp4" and slug not in known and re.fullmatch(r"[a-z0-9_]+", slug):
-                    self.state["scenes"].append({"slug": slug, "name": slug.replace("_", " ").title()})
-                    make_thumb(os.path.join(self.videos, fn), os.path.join(self.thumbs, slug + ".jpg"))
+                    self.state["scenes"].append({"slug": slug, "name": slug.replace("_", " ").capitalize()})
             self.state["scenes"] = [s for s in self.state["scenes"]
                                     if os.path.exists(os.path.join(self.videos, s["slug"] + ".mp4"))]
             for s in self.state["scenes"]:
@@ -85,10 +117,23 @@ class Store:
                 return s
         return None
 
+    def roku(self, ip):
+        return next((r for r in self.state["rokus"] if r["ip"] == ip), None)
+
 
 def slugify(text):
     t = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
     return re.sub(r"[^a-z0-9]+", "_", t).strip("_")
+
+
+def unique_name(store, name):
+    name = re.sub(r"\s+", " ", re.sub(r"[\[\(\{].*?[\]\)\}]", "", name)).strip(" -|*") or "Video"
+    if len(name) > 40:
+        name = name[:40].rsplit(" ", 1)[0]
+    base, n = name, 2
+    while store.find(name) or store.find(slugify(name)) or not slugify(name):
+        name, n = f"{base} {n}", n + 1
+    return name
 
 
 # ---------------------------------------------------------------- video work
@@ -103,19 +148,24 @@ def run(args, timeout=3600):
 
 
 def probe(path):
-    d = json.loads(run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-                        "stream=codec_name,height:format=duration", "-of", "json", path], 120))
-    s = d["streams"][0]
-    return s["codec_name"], int(s.get("height") or 0), float(d["format"]["duration"])
+    d = json.loads(run(["ffprobe", "-v", "error", "-show_entries",
+                        "stream=codec_type,codec_name,height:format=duration", "-of", "json", path], 120))
+    v = next(s for s in d["streams"] if s.get("codec_type") == "video")
+    has_audio = any(s.get("codec_type") == "audio" for s in d["streams"])
+    return v["codec_name"], int(v.get("height") or 0), float(d["format"]["duration"]), has_audio
 
 
 def make_thumb(video, out):
     try:
-        _, _, dur = probe(video)
+        dur = probe(video)[2]
         run(["ffmpeg", "-v", "error", "-y", "-ss", str(min(10, dur / 3)), "-i", video,
              "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "4", out], 120)
     except Exception as e:
         print(f"thumbnail failed for {video}: {e}", file=sys.stderr)
+
+
+ENC = ["-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
+       "-profile:v", "high", "-level", "4.1"]
 
 
 def add_video(store, job_id, url, name):
@@ -130,13 +180,8 @@ def add_video(store, job_id, url, name):
             name = title[0] if title else "Video"
             if re.fullmatch(r"[\w-]*\d[\w-]*", name):  # bare file names like 30252-720
                 name = "Video"
-        name = re.sub(r"\s+", " ", re.sub(r"[\[\(].*?[\]\)]", "", name)).strip(" -|") or "Video"
-        if len(name) > 40:
-            name = name[:40].rsplit(" ", 1)[0]
         with _lock:
-            base, n = name, 2
-            while store.find(name) or store.find(slugify(name)) or not slugify(name):
-                name, n = f"{base} {n}", n + 1
+            name = unique_name(store, name)
         job["name"] = name
         slug = slugify(name)
 
@@ -148,16 +193,24 @@ def add_video(store, job_id, url, name):
         src = os.path.join(store.tmp, next(f for f in os.listdir(store.tmp) if f.startswith("dl.")))
 
         job["status"] = "Converting for the Roku"
-        codec, height, dur = probe(src)
+        codec, height, dur, has_audio = probe(src)
         clean = os.path.join(store.tmp, "clean.mp4")
-        # keep the sound (AAC) so it can be turned on; it's muted unless "Sound" is on
-        audio = ["-map", "0:a:0?", "-c:a", "aac", "-b:a", "160k"]
-        if codec == "h264" and height <= 1080:
+        audio = ["-map", "0:a:0?", "-c:a", "aac", "-b:a", "160k"]  # sound kept; muted unless "Sound" is on
+        if not has_audio and dur < SEAMLESS_UNDER:
+            # short silent clip: crossfade its end into its start so the repeat is invisible
+            fade = min(2.0, dur / 4)
+            run(["ffmpeg", "-v", "error", "-y", "-i", src, "-filter_complex",
+                 f"[0:v]fps=30,scale=-2:'min(1080,ih)',format=yuv420p,split[s1][s2];"
+                 f"[s1]trim={fade}:{dur},setpts=PTS-STARTPTS,settb=AVTB[a];"
+                 f"[s2]trim=0:{fade},setpts=PTS-STARTPTS,settb=AVTB[b];"
+                 f"[a][b]xfade=transition=fade:duration={fade}:offset={dur - 2 * fade:.3f}[v]",
+                 "-map", "[v]", "-an"] + ENC + [clean])
+            dur -= fade
+        elif codec == "h264" and height <= 1080:
             run(["ffmpeg", "-v", "error", "-y", "-i", src, "-map", "0:v:0", "-c:v", "copy"] + audio + [clean])
         else:
             run(["ffmpeg", "-v", "error", "-y", "-i", src, "-map", "0:v:0",
-                 "-vf", "scale=-2:'min(1080,ih)',fps=30,format=yuv420p", "-c:v", "libx264",
-                 "-preset", "veryfast", "-crf", "22", "-profile:v", "high", "-level", "4.1"] + audio + [clean])
+                 "-vf", "scale=-2:'min(1080,ih)',fps=30,format=yuv420p"] + ENC + audio + [clean])
         loops = max(0, math.ceil(LOOP_SECONDS / dur) - 1) if dur > 0 else 0
         dest = os.path.join(store.videos, slug + ".mp4")
         run(["ffmpeg", "-v", "error", "-y", "-stream_loop", str(loops), "-i", clean,
@@ -168,19 +221,55 @@ def add_video(store, job_id, url, name):
 
         with _lock:
             store.state["scenes"].append({"slug": slug, "name": name})
-            store.state["current"] = slug
+            if not store.state["current"] or job.get("select", True):
+                store.state["current"] = slug
             store.save()
         job["status"] = "done"
     except Exception as e:
         job["status"], job["error"] = "failed", str(e)
 
 
+_queue = threading.Lock()  # one download at a time
+
+
+def queue_video(store, url, name, select=True):
+    job_id = uuid.uuid4().hex[:8]
+    jobs[job_id] = {"url": url, "name": name or "", "status": "Waiting", "error": None, "select": select}
+
+    def work():
+        with _queue:
+            add_video(store, job_id, url, name)
+    threading.Thread(target=work, daemon=True).start()
+    return job_id
+
+
+# ---------------------------------------------------------------- Roku watcher
+
+def watch_rokus(store):
+    """When a Roku's own screensaver starts, launch SaverSwap over it."""
+    last = {}
+    while True:
+        for r in list(store.state["rokus"]):
+            ip = r["ip"]
+            try:
+                if (store.state["autostart"] and store.state["scenes"] and rokus.screensaver_running(ip)
+                        and time.time() - last.get(ip, 0) > 30):
+                    rokus.launch(ip)
+                    last[ip] = time.time()
+                    print(f"screensaver started on {r['name']}: launched SaverSwap", flush=True)
+            except Exception as e:
+                if time.time() - last.get("err" + ip, 0) > 600:
+                    print(f"can't reach Roku {ip}: {e}", file=sys.stderr, flush=True)
+                    last["err" + ip] = time.time()
+        time.sleep(5)
+
+
 # ---------------------------------------------------------------- HTTP
 
 class Handler(BaseHTTPRequestHandler):
-    store = None  # set in main()
-    # HTTP/1.1 keep-alive + ranges like a real web server (every reply sets Content-Length);
-    # the Roku video player is happier with it than with HTTP/1.0.
+    store = None       # set in main()
+    public_url = None  # optional override of the address the Roku should use
+    # HTTP/1.1 keep-alive + ranges like a real web server (every reply sets Content-Length)
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):
@@ -202,33 +291,98 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return {}
 
-    def base_url(self):
-        return f"http://{self.headers.get('Host') or 'localhost'}"
+    def host(self):
+        return self.headers.get("Host") or "localhost"
 
-    def scene_payload(self):
-        st, s = self.store.state, self.store.settings
+    def base_url(self):
+        return f"http://{self.host()}"
+
+    def host_ip(self):
+        return self.host().rsplit(":", 1)[0].strip("[]")
+
+    def server_url_for(self, roku_ip):
+        """The address the Roku should use to reach this server."""
+        if self.public_url:
+            return self.public_url
+        h = self.host_ip()
+        if h not in ("localhost", "127.0.0.1", "::1"):
+            return self.base_url()
+        ip = rokus.lan_address_towards(roku_ip)
+        if rokus.is_docker_address(ip):
+            raise rokus.InstallError(
+                "Open this page using the computer's network address (like http://192.168.1.10:8099) "
+                "instead of localhost, so the TV knows where to find it.")
+        return f"http://{ip}:{self.server.server_address[1]}"
+
+    def payload(self):
+        st = self.store.state
         cur = self.store.find(st["current"])
+        b = self.base_url()
+        du = shutil.disk_usage(self.store.dir)
+        used = sum(os.path.getsize(os.path.join(self.store.videos, f)) for f in os.listdir(self.store.videos))
         return {
             "current": cur["name"] if cur else None,
-            "video": f"{self.base_url()}/videos/{cur['slug']}.mp4" if cur else None,
-            "scenes": [{"name": x["name"], "slug": x["slug"],
-                        "thumb": f"{self.base_url()}/thumbs/{x['slug']}.jpg"} for x in st["scenes"]],
-            "overlay": {"clock": s["clock"], "weather": s["lat"] is not None,
-                        "lat": s["lat"], "lon": s["lon"], "units": s["units"], "sound": st["sound"]},
-            "settings": {"sound": st["sound"], "autostart": st["autostart"], "rokus": s["rokus"]},
-            "jobs": [dict(id=k, **v) for k, v in jobs.items() if v["status"] != "done"],
+            "video": f"{b}/videos/{cur['slug']}.mp4" if cur else None,
+            "setup_url": b,
+            "scenes": [{"name": x["name"], "slug": x["slug"], "thumb": f"{b}/thumbs/{x['slug']}.jpg"}
+                       for x in st["scenes"]],
+            "overlay": {"clock": st["clock"], "weather": bool(st["weather"] and st["lat"] is not None),
+                        "lat": st["lat"], "lon": st["lon"], "units": st["units"], "sound": st["sound"]},
+            "settings": {k: st[k] for k in ("sound", "autostart", "units", "clock", "weather", "place")},
+            "rokus": [{"ip": r["ip"], "name": r["name"], "model": r.get("model", ""),
+                       "saved_password": bool(r.get("password"))} for r in st["rokus"]],
+            "storage": {"path": self.store.dir, "used_gb": round(used / 1e9, 1),
+                        "free_gb": round(du.free / 1e9, 1)},
+            "jobs": [dict(id=k, **{x: v[x] for x in ("url", "name", "status", "error")})
+                     for k, v in jobs.items() if v["status"] != "done"],
+            "starter_left": [n for n, _ in STARTER if not self.store.find(n)],
+            "version": VERSION,
         }
 
+    # ---- GET
+
     def do_GET(self):
-        path = unquote(urlparse(self.path).path)
+        u = urlparse(self.path)
+        path, q = unquote(u.path), parse_qs(u.query)
         if path in ("/", "/index.html"):
             return self.send_file(os.path.join(HERE, "index.html"), "text/html; charset=utf-8")
         if path == "/api/scene":
-            return self.send_json(self.scene_payload())
+            return self.send_json(self.payload())
+        if path == "/api/rokus/scan":
+            subnet = (q.get("subnet") or [""])[0]
+            if not subnet:
+                h = self.host_ip()
+                if not re.fullmatch(r"\d+\.\d+\.\d+\.\d+", h) or h.startswith("127."):
+                    return self.send_json({"error": "Open this page using the computer's network address "
+                                                    "(not localhost) so I know which network to search."}, 400)
+                subnet = h.rsplit(".", 1)[0] + ".0/24"
+            known = {r["ip"] for r in self.store.state["rokus"]}
+            found = [dict(f, added=f["ip"] in known) for f in rokus.scan(subnet)]
+            return self.send_json({"subnet": subnet, "found": found})
+        if path == "/api/rokus/status":
+            ip = (q.get("ip") or [""])[0]
+            try:
+                return self.send_json(rokus.device_info(ip))
+            except Exception:
+                return self.send_json({"ip": ip, "error": "TV not reachable (is it on?)"}, 502)
+        if path == "/api/geocode":
+            name = (q.get("q") or [""])[0].strip()
+            if not name:
+                return self.send_json({"results": []})
+            url = ("https://geocoding-api.open-meteo.com/v1/search?count=5&language=en&format=json&name="
+                   + urllib.parse.quote(name))
+            try:
+                with urllib.request.urlopen(url, timeout=10) as r:
+                    res = json.load(r).get("results") or []
+            except Exception:
+                return self.send_json({"error": "Couldn't look that up right now."}, 502)
+            return self.send_json({"results": [
+                {"place": ", ".join(x for x in (p.get("name"), p.get("admin1"), p.get("country_code")) if x),
+                 "lat": round(p["latitude"], 3), "lon": round(p["longitude"], 3)} for p in res]})
+        if path == "/qr.png":
+            return self.send_qr((q.get("text") or [self.base_url()])[0])
         if path == "/api/log":  # diagnostics from the Roku app
-            from urllib.parse import parse_qs
-            msg = parse_qs(urlparse(self.path).query).get("msg", [""])[0][:500]
-            print(f"roku {self.client_address[0]}: {msg}", flush=True)
+            print(f"roku {self.client_address[0]}: {(q.get('msg') or [''])[0][:500]}", flush=True)
             return self.send_json({"ok": True})
         m = re.fullmatch(r"/(videos|thumbs)/([a-z0-9_]+)\.(mp4|jpg)", path)
         if m:
@@ -236,54 +390,158 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_file(os.path.join(folder, f"{m.group(2)}.{m.group(3)}"))
         self.send_json({"error": "not found"}, 404)
 
+    # ---- POST
+
     def do_POST(self):
         path = urlparse(self.path).path
         body = self.read_json()
-        if path == "/api/select":
-            s = self.store.find(body.get("scene"))
-            if not s:
-                return self.send_json({"error": "no such scene"}, 404)
-            with _lock:
-                self.store.state["current"] = s["slug"]
-                self.store.save()
-            return self.send_json(self.scene_payload())
-        if path == "/api/add":
-            text = (body.get("url") or "").strip()
-            m = re.search(r"https?://\S+", text)
-            if not m:
-                return self.send_json({"error": "that doesn't look like a link"}, 400)
-            name = (body.get("name") or (text[:m.start()] + " " + text[m.end():])).strip(" -:|")
-            job_id = uuid.uuid4().hex[:8]
-            jobs[job_id] = {"url": m.group(0), "name": name or "", "status": "Queued", "error": None}
-            threading.Thread(target=self.worker, args=(job_id, m.group(0), name), daemon=True).start()
-            return self.send_json({"job": job_id}, 202)
-        if path == "/api/delete":
-            s = self.store.find(body.get("scene"))
-            if not s:
-                return self.send_json({"error": "no such scene"}, 404)
-            for p in (os.path.join(self.store.videos, s["slug"] + ".mp4"),
-                      os.path.join(self.store.thumbs, s["slug"] + ".jpg")):
-                if os.path.exists(p):
-                    os.remove(p)
-            self.store.scan()
-            return self.send_json(self.scene_payload())
-        if path == "/api/settings":
-            with _lock:
-                for k in ("sound", "autostart"):
-                    if isinstance(body.get(k), bool):
-                        self.store.state[k] = body[k]
-                self.store.save()
-            return self.send_json(self.scene_payload())
-        if path == "/api/rescan":
-            self.store.scan()
-            return self.send_json(self.scene_payload())
-        self.send_json({"error": "not found"}, 404)
+        st = self.store.state
+        try:
+            handler = self.POSTS.get(path)
+            if not handler:
+                return self.send_json({"error": "not found"}, 404)
+            return handler(self, body, st)
+        except rokus.InstallError as e:
+            return self.send_json({"error": str(e)}, 400)
+        except OSError:
+            return self.send_json({"error": "Couldn't reach the TV. Is it on and on the same network?"}, 502)
 
-    _queue = threading.Lock()  # one download at a time
+    def p_select(self, body, st):
+        s = self.store.find(body.get("scene"))
+        if not s:
+            return self.send_json({"error": "no such scene"}, 404)
+        with _lock:
+            st["current"] = s["slug"]
+            self.store.save()
+        return self.send_json(self.payload())
 
-    def worker(self, job_id, url, name):
-        with Handler._queue:
-            add_video(self.store, job_id, url, name)
+    def p_add(self, body, st):
+        text = (body.get("url") or "").strip()
+        m = re.search(r"https?://\S+", text)
+        if not m:
+            return self.send_json({"error": "That doesn't look like a link."}, 400)
+        name = (body.get("name") or (text[:m.start()] + " " + text[m.end():])).strip(" -:|")
+        return self.send_json({"job": queue_video(self.store, m.group(0), name)}, 202)
+
+    def p_starter(self, body, st):
+        first = not st["scenes"]
+        for i, (name, url) in enumerate(STARTER):
+            if not self.store.find(name) and not any(j["name"] == name for j in jobs.values()
+                                                     if j["status"] not in ("done", "failed")):
+                queue_video(self.store, url, name, select=first and i == 0)
+        return self.send_json(self.payload(), 202)
+
+    def p_delete(self, body, st):
+        s = self.store.find(body.get("scene"))
+        if not s:
+            return self.send_json({"error": "no such scene"}, 404)
+        for p in (os.path.join(self.store.videos, s["slug"] + ".mp4"),
+                  os.path.join(self.store.thumbs, s["slug"] + ".jpg")):
+            if os.path.exists(p):
+                os.remove(p)
+        self.store.scan()
+        return self.send_json(self.payload())
+
+    def p_rename(self, body, st):
+        s = self.store.find(body.get("scene"))
+        if not s:
+            return self.send_json({"error": "no such scene"}, 404)
+        with _lock:
+            new = unique_name(self.store, (body.get("name") or "").strip()) if body.get("name") else None
+            if not new:
+                return self.send_json({"error": "Give it a name."}, 400)
+            old, slug = s["slug"], slugify(new)
+            for folder, ext in ((self.store.videos, ".mp4"), (self.store.thumbs, ".jpg")):
+                if os.path.exists(os.path.join(folder, old + ext)):
+                    os.replace(os.path.join(folder, old + ext), os.path.join(folder, slug + ext))
+            s["name"], s["slug"] = new, slug
+            if st["current"] == old:
+                st["current"] = slug
+            self.store.save()
+        return self.send_json(self.payload())
+
+    def p_settings(self, body, st):
+        with _lock:
+            for k in ("sound", "autostart", "clock", "weather"):
+                if isinstance(body.get(k), bool):
+                    st[k] = body[k]
+            if body.get("units") in ("fahrenheit", "celsius"):
+                st["units"] = body["units"]
+            if "lat" in body and "lon" in body:
+                try:
+                    st["lat"], st["lon"] = float(body["lat"]), float(body["lon"])
+                    st["place"] = (body.get("place") or "").strip() or f"{st['lat']}, {st['lon']}"
+                except (TypeError, ValueError):
+                    return self.send_json({"error": "That location didn't work."}, 400)
+            self.store.save()
+        return self.send_json(self.payload())
+
+    def p_roku_add(self, body, st):
+        info = rokus.device_info(body.get("ip", "").strip())
+        with _lock:
+            r = self.store.roku(info["ip"])
+            if r:
+                r.update(name=info["name"], model=info["model"])
+            else:
+                st["rokus"].append({"ip": info["ip"], "name": info["name"], "model": info["model"],
+                                    "password": ""})
+            self.store.save()
+        return self.send_json(self.payload())
+
+    def p_roku_remove(self, body, st):
+        with _lock:
+            st["rokus"] = [r for r in st["rokus"] if r["ip"] != body.get("ip")]
+            self.store.save()
+        return self.send_json(self.payload())
+
+    def p_roku_install(self, body, st):
+        if not APP_DIR:
+            raise rokus.InstallError("The Roku app files are missing from this install.")
+        ip = body.get("ip", "")
+        r = self.store.roku(ip)
+        if not r:
+            return self.send_json({"error": "Add that TV first."}, 400)
+        password = (body.get("password") or "").strip() or r.get("password", "")
+        if not password:
+            return self.send_json({"error": "Enter the Developer Mode password you set on the TV."}, 400)
+        rokus.install(ip, password, APP_DIR, self.server_url_for(ip))
+        with _lock:
+            r["password"] = password
+            self.store.save()
+        return self.send_json(self.payload())
+
+    def p_roku_launch(self, body, st):
+        rokus.launch(body.get("ip", ""))
+        return self.send_json({"ok": True})
+
+    def p_rescan(self, body, st):
+        self.store.scan()
+        return self.send_json(self.payload())
+
+    POSTS = {
+        "/api/select": p_select, "/api/add": p_add, "/api/starter": p_starter,
+        "/api/delete": p_delete, "/api/rename": p_rename, "/api/settings": p_settings,
+        "/api/rescan": p_rescan, "/api/rokus/add": p_roku_add, "/api/rokus/remove": p_roku_remove,
+        "/api/rokus/install": p_roku_install,
+        "/api/rokus/launch": p_roku_launch,
+    }
+
+    # ---- files
+
+    def send_qr(self, text):
+        try:
+            import qrcode
+            import qrcode.image.pure
+            buf = __import__("io").BytesIO()
+            qrcode.make(text, image_factory=qrcode.image.pure.PyPNGImage, box_size=10, border=2).save(buf)
+            data = buf.getvalue()
+        except Exception:
+            return self.send_json({"error": "QR codes need: pip install qrcode pypng"}, 501)
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def send_file(self, path, ctype=None):
         if not os.path.isfile(path):
@@ -331,56 +589,31 @@ class Handler(BaseHTTPRequestHandler):
         self.do_GET()
 
 
-def watch_rokus(store, rokus):
-    """Roku forbids video in real screensavers, so SaverSwap is an app: when a Roku's
-    own screensaver starts (it shows up in ECP /query/active-app), launch SaverSwap
-    over it. Any remote button closes SaverSwap again."""
-    last = {}
-    while True:
-        for ip in rokus:
-            try:
-                with urllib.request.urlopen(f"http://{ip}:8060/query/active-app", timeout=5) as r:
-                    active = r.read().decode("utf-8", "replace")
-                if ("<screensaver" in active and store.state["autostart"] and store.state["scenes"]
-                        and time.time() - last.get(ip, 0) > 30):
-                    urllib.request.urlopen(urllib.request.Request(
-                        f"http://{ip}:8060/launch/dev", data=b"", method="POST"), timeout=5).close()
-                    last[ip] = time.time()
-                    print(f"screensaver started on {ip}: launched SaverSwap", flush=True)
-            except Exception as e:
-                if time.time() - last.get(f"err{ip}", 0) > 600:
-                    print(f"can't reach Roku {ip}: {e}", file=sys.stderr, flush=True)
-                    last[f"err{ip}"] = time.time()
-        time.sleep(10)
-
-
 def main():
     env = os.environ.get
-    ap = argparse.ArgumentParser(description="SaverSwap server")
+    ap = argparse.ArgumentParser(description="SaverSwap server. Everything else is set up on its web page.")
     ap.add_argument("--data", default=env("SAVERSWAP_DATA", os.path.join(HERE, "data")),
-                    help="folder for videos, thumbnails and state (default: ./data)")
+                    help="folder for videos, thumbnails and settings (default: ./data)")
     ap.add_argument("--port", type=int, default=int(env("SAVERSWAP_PORT", "8099")))
-    ap.add_argument("--lat", type=float, default=float(env("SAVERSWAP_LAT")) if env("SAVERSWAP_LAT") else None,
-                    help="latitude for the weather overlay (leave out to hide weather)")
+    ap.add_argument("--url", default=env("SAVERSWAP_URL"),
+                    help="address the TV should use to reach this server, if the automatic one is wrong")
+    # Optional first-run defaults (the web page can change all of these later)
+    ap.add_argument("--roku", default=env("SAVERSWAP_ROKU", ""), help="Roku IP address(es), comma-separated")
+    ap.add_argument("--lat", type=float, default=float(env("SAVERSWAP_LAT")) if env("SAVERSWAP_LAT") else None)
     ap.add_argument("--lon", type=float, default=float(env("SAVERSWAP_LON")) if env("SAVERSWAP_LON") else None)
-    ap.add_argument("--units", choices=["fahrenheit", "celsius"], default=env("SAVERSWAP_UNITS", "fahrenheit"))
-    ap.add_argument("--no-clock", action="store_true", default=env("SAVERSWAP_CLOCK", "1") == "0")
-    ap.add_argument("--roku", default=env("SAVERSWAP_ROKU", ""),
-                    help="Roku IP address(es), comma-separated: launch SaverSwap when its screensaver starts")
+    ap.add_argument("--units", choices=["fahrenheit", "celsius"], default=env("SAVERSWAP_UNITS"))
     a = ap.parse_args()
-    if (a.lat is None) != (a.lon is None):
-        ap.error("--lat and --lon go together")
     for tool in ("ffmpeg", "ffprobe"):
         if not shutil.which(tool):
-            print(f"warning: {tool} not found on PATH; adding videos from links won't work", file=sys.stderr)
-    rokus = [r.strip() for r in a.roku.split(",") if r.strip()]
-    Handler.store = Store(a.data, {"lat": a.lat, "lon": a.lon, "units": a.units,
-                                   "clock": not a.no_clock, "rokus": rokus})
-    if rokus:
-        threading.Thread(target=watch_rokus, args=(Handler.store, rokus), daemon=True).start()
-    else:
-        print("no --roku given: SaverSwap won't start by itself when the TV goes idle", file=sys.stderr)
-    print(f"SaverSwap on http://0.0.0.0:{a.port}  (data: {Handler.store.dir})", flush=True)
+            print(f"warning: {tool} not found on PATH; adding videos won't work", file=sys.stderr)
+    seed = {"roku_ips": [r.strip() for r in a.roku.split(",") if r.strip()], "units": a.units,
+            "lat": a.lat, "lon": a.lon}
+    if a.lat is not None and a.lon is not None:
+        seed["place"] = f"{a.lat}, {a.lon}"
+    Handler.store = Store(a.data, seed)
+    Handler.public_url = a.url.rstrip("/") if a.url else None
+    threading.Thread(target=watch_rokus, args=(Handler.store,), daemon=True).start()
+    print(f"SaverSwap {VERSION} on http://0.0.0.0:{a.port}  (data: {Handler.store.dir})", flush=True)
     ThreadingHTTPServer(("0.0.0.0", a.port), Handler).serve_forever()
 
 

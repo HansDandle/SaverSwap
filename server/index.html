@@ -6,115 +6,307 @@
 <title>SaverSwap</title>
 <style>
   :root {
-    --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #667085;
+    --bg: #f5f6f8; --card: #ffffff; --text: #1d2330; --muted: #667085;
     --accent: #1f7a8c; --accent-text: #ffffff; --border: #dde1e7; --danger: #b42318;
+    --ok: #067647; --soft: #eef6f8;
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #11151c; --card: #1a202a; --text: #e8ebf0; --muted: #98a2b3;
-            --accent: #3ba7bd; --accent-text: #0b1015; --border: #2c3442; --danger: #f97066; }
+            --accent: #3ba7bd; --accent-text: #0b1015; --border: #2c3442; --danger: #f97066;
+            --ok: #47cd89; --soft: #16252b; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
-         font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  main { max-width: 960px; margin: 0 auto; padding: 20px 16px 48px; }
-  h1 { font-size: 1.5rem; margin: 0 0 4px; }
-  p.sub { color: var(--muted); margin: 0 0 20px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
-  .scene { background: var(--card); border: 2px solid var(--border); border-radius: 12px;
-           overflow: hidden; cursor: pointer; position: relative; padding: 0; text-align: left;
-           color: inherit; font: inherit; }
-  .scene img { display: block; width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #000; }
-  .scene .label { padding: 8px 10px; font-weight: 600; }
+         font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 20px 16px 56px; }
+  h1 { font-size: 1.6rem; margin: 0; }
+  h2 { font-size: 1.15rem; margin: 0 0 10px; }
+  .sub { color: var(--muted); margin: 2px 0 20px; }
+  section { background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+            padding: 16px; margin: 0 0 16px; }
+  .muted { color: var(--muted); }
+  .small { font-size: .9rem; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  input[type=text], input[type=url], input[type=password], select {
+    flex: 1 1 200px; min-width: 0; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font: inherit; }
+  button { padding: 9px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--card);
+           color: var(--text); font: inherit; cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  button.link { border: 0; background: none; color: var(--accent); padding: 4px 6px; }
+  button:disabled { opacity: .55; cursor: default; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+  .scene { border: 2px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--card); }
   .scene.current { border-color: var(--accent); }
-  .scene.current .label::after { content: " · on the TV"; color: var(--accent); font-weight: 500; }
-  .scene .del { position: absolute; top: 6px; right: 6px; border: 0; border-radius: 8px;
-                background: rgba(0,0,0,.55); color: #fff; padding: 4px 8px; cursor: pointer; font-size: .85rem; }
-  form { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
-         padding: 14px; margin: 24px 0 8px; display: grid; gap: 10px; }
-  form label { font-weight: 600; }
-  .row { display: flex; gap: 8px; flex-wrap: wrap; }
-  input { flex: 1 1 220px; min-width: 0; padding: 10px 12px; border-radius: 8px;
-          border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; }
-  button.go { padding: 10px 18px; border: 0; border-radius: 8px; background: var(--accent);
-              color: var(--accent-text); font: inherit; font-weight: 600; cursor: pointer; }
-  .hint { color: var(--muted); font-size: .9rem; margin: 0; }
-  .jobs { margin: 8px 0 0; padding: 0; list-style: none; }
-  .jobs li { color: var(--muted); }
-  .jobs li.failed { color: var(--danger); }
-  .empty { color: var(--muted); }
-  .toggles { display: flex; gap: 20px; flex-wrap: wrap; margin: 0 0 16px; }
-  .toggles label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
-  .toggles input { width: 20px; height: 20px; flex: none; accent-color: var(--accent); }
+  .scene img { display: block; width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #000; cursor: pointer; }
+  .scene .bar { display: flex; align-items: center; gap: 4px; padding: 6px 6px 6px 10px; }
+  .scene .bar button.icon { font-size: 1.05rem; padding: 2px 8px; }
+  .scene .name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .scene.current .name::after { content: " · on the TV"; color: var(--accent); font-weight: 500; }
+  .tv { border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin: 10px 0 0; }
+  .tv .title { font-weight: 600; }
+  .step { background: var(--soft); border-radius: 10px; padding: 12px; margin-top: 10px; }
+  .step ol { margin: 6px 0 10px 20px; padding: 0; }
+  .ok { color: var(--ok); font-weight: 600; }
+  .err { color: var(--danger); }
+  .toggles { display: grid; gap: 10px; }
+  .toggles label { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+  .toggles input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
+  ul.jobs { margin: 8px 0 0; padding-left: 18px; }
+  ul.jobs li.failed { color: var(--danger); }
+  .found { display: grid; gap: 6px; margin-top: 8px; }
+  .hidden { display: none !important; }
+  dialog { max-width: 560px; width: calc(100% - 32px); border: 1px solid var(--border); border-radius: 14px;
+           background: var(--card); color: var(--text); padding: 20px; }
+  dialog::backdrop { background: rgba(0,0,0,.5); }
+  dialog ol { padding-left: 20px; }
+  dialog li { margin-bottom: 8px; }
+  .keys { font-weight: 600; background: var(--soft); border-radius: 8px; padding: 8px 10px; margin: 6px 0; }
 </style>
 </head>
 <body>
 <main>
   <h1>SaverSwap</h1>
-  <p class="sub">Tap a scene to put it on the TV.</p>
-  <div class="toggles">
-    <label><input type="checkbox" id="sound"> Sound</label>
-    <label id="autoWrap"><input type="checkbox" id="autostart"> Start when the TV goes idle</label>
-  </div>
-  <div id="scenes" class="grid"></div>
+  <p class="sub">Any video as your Roku's idle screen.</p>
 
-  <form id="add">
-    <label for="url">Add a video</label>
-    <div class="row">
+  <!-- 1. TV -->
+  <section id="tvSection">
+    <h2>Your TV</h2>
+    <div id="tvs"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="primary" id="scanBtn">Find my Roku</button>
+      <button class="link" id="manualBtn">Enter its address instead</button>
+    </div>
+    <div class="row hidden" id="manualRow" style="margin-top:8px">
+      <input type="text" id="manualIp" placeholder="Roku IP, like 192.168.1.50 (Settings → Network → About)">
+      <button id="manualAdd">Add</button>
+    </div>
+    <div id="scanOut" class="small"></div>
+  </section>
+
+  <!-- 2. Scenes -->
+  <section>
+    <h2>Scenes</h2>
+    <p class="muted small" id="scenesHint">Tap a picture to put it on the TV.</p>
+    <div id="scenes" class="grid"></div>
+    <div id="starter" class="step hidden">
+      <b>Starter pack:</b> <span id="starterList"></span>
+      <div class="small muted" style="margin:4px 0 8px">Free clips from Mixkit. Takes a few minutes.</div>
+      <button class="primary" id="starterBtn">Add them</button>
+    </div>
+  </section>
+
+  <!-- 3. Add -->
+  <section>
+    <h2>Add a video</h2>
+    <form id="add" class="row">
       <input id="url" type="url" placeholder="YouTube or .mp4 link" required>
       <input id="name" type="text" placeholder="Name (optional)">
-      <button class="go" type="submit">Add</button>
-    </div>
-    <p class="hint">The first 20 minutes are saved without sound. Short clips are repeated so the loop rarely restarts.</p>
+      <button class="primary" type="submit">Add</button>
+    </form>
+    <p class="muted small" style="margin:8px 0 0">Saves the first 20 minutes. Short clips repeat seamlessly.</p>
     <ul id="jobs" class="jobs"></ul>
-  </form>
+  </section>
+
+  <!-- 4. Settings -->
+  <section>
+    <h2>Settings</h2>
+    <div class="toggles">
+      <label><input type="checkbox" id="autostart"> Start when the TV goes idle</label>
+      <label><input type="checkbox" id="sound"> Play the video's sound</label>
+      <label><input type="checkbox" id="clock"> Show the clock</label>
+      <label><input type="checkbox" id="weather"> Show the weather</label>
+    </div>
+    <div id="weatherBox" style="margin-top:12px">
+      <div class="small muted">Weather location: <b id="place">not set</b></div>
+      <div class="row" style="margin-top:6px">
+        <input type="text" id="placeQ" placeholder="City or ZIP code">
+        <select id="units" style="flex:0 0 auto">
+          <option value="fahrenheit">°F</option><option value="celsius">°C</option>
+        </select>
+        <button id="placeBtn">Set</button>
+      </div>
+      <div id="placeOut" class="found"></div>
+    </div>
+  </section>
+
+  <!-- 5. Storage -->
+  <section>
+    <h2>Storage</h2>
+    <div class="small" id="storage"></div>
+    <p class="muted small" style="margin:6px 0 0">To keep videos somewhere else, change the folder in your
+      Docker settings (the <code>/data</code> volume) or start the server with <code>--data</code>.</p>
+  </section>
+  <p class="muted small" id="ver"></p>
 </main>
+
+<dialog id="devHelp">
+  <h2>Turn on Developer Mode</h2>
+  <p class="small muted" style="margin-top:0">Roku's official way to add your own app. Nothing is changed or unlocked
+    on your account, and you can turn it off again any time the same way.</p>
+  <ol>
+    <li>Pick up the <b>Roku remote</b> and go to the Roku home screen.</li>
+    <li>Press these buttons in order, about one per second:
+      <div class="keys">Home Home Home &nbsp;·&nbsp; Up Up &nbsp;·&nbsp; Right Left Right Left Right</div>
+      A <b>Developer Settings</b> screen appears. If it doesn't, press Home and try again a little slower.</li>
+    <li>Write down the address it shows (like <code>http://192.168.1.50</code>). That's your TV's address.</li>
+    <li>Choose <b>Enable installer and restart</b>, then <b>I Agree</b> to the developer agreement.</li>
+    <li>Make up a <b>password</b> (letters and numbers) and choose <b>Set password and reboot</b>.
+      You'll type it here once to install SaverSwap.</li>
+    <li>The TV restarts. Come back to this page and tap <b>I did it, check again</b>.</li>
+  </ol>
+  <p class="small muted">Already turned it on before but forgot the password? Do the same button sequence; the
+    screen lets you set a new one.</p>
+  <form method="dialog"><button class="primary">Got it</button></form>
+</dialog>
 <script>
 const $ = (s) => document.querySelector(s);
-let failed = {};
+let data = null, tvStatus = {}, failed = {};
 
 async function api(path, body) {
   const r = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" },
                                        body: JSON.stringify(body) } : undefined);
-  return r.json();
+  let j = {};
+  try { j = await r.json(); } catch {}
+  if (!r.ok && !j.error) j.error = "Something went wrong (" + r.status + ")";
+  return j;
+}
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// ---------- TVs
+async function refreshTvs() {
+  if (!data) return;
+  await Promise.all(data.rokus.map(async (r) => { tvStatus[r.ip] = await api("/api/rokus/status?ip=" + r.ip); }));
+  renderTvs();
 }
 
-function render(d) {
-  $("#sound").checked = d.settings.sound;
-  $("#autostart").checked = d.settings.autostart;
-  $("#autoWrap").hidden = !d.settings.rokus.length;
+function renderTvs() {
+  const box = $("#tvs");
+  box.innerHTML = "";
+  if (!data.rokus.length) {
+    box.innerHTML = '<p class="muted">No TV yet. Make sure your Roku is on, then tap <b>Find my Roku</b>.</p>';
+    return;
+  }
+  for (const r of data.rokus) {
+    const s = tvStatus[r.ip] || {};
+    const el = document.createElement("div");
+    el.className = "tv";
+    let step = "";
+    if (s.error) {
+      step = `<div class="step err">${esc(s.error)}</div>`;
+    } else if (!s.dev) {
+      step = `<div class="step"><b>Step 1: turn on Developer Mode on this TV</b>
+        <div class="small" style="margin:4px 0 8px">It's Roku's official, free way to add your own app. It takes about a minute with the remote.</div>
+        <button class="link" data-act="howto" style="padding-left:0">Click here to learn how to set your Roku TV to Developer Mode</button><br>
+        <button class="primary" data-act="recheck" style="margin-top:8px">I did it, check again</button></div>`;
+    } else if (!s.installed) {
+      step = `<div class="step"><b>Step 2: install SaverSwap</b>
+        <div class="row" style="margin-top:8px">
+          <input type="password" placeholder="${r.saved_password ? "Password saved (type to change)" : "Developer Mode password you set"}" data-pw>
+          <button class="primary" data-act="install">Install</button></div>
+        <div class="small err" data-msg></div></div>`;
+    } else {
+      step = `<div class="small" style="margin-top:6px"><span class="ok">✓ Ready.</span>
+        SaverSwap starts when the TV's screensaver kicks in. In Roku Settings → Theme → Screensavers,
+        keep any screensaver selected and set the wait time you like.</div>
+        <div class="row" style="margin-top:8px">
+          <button data-act="launch">Show it on the TV now</button>
+          <button class="link" data-act="reinstall">Reinstall</button>
+        </div><div class="small err" data-msg></div>`;
+    }
+    el.innerHTML = `<div class="row"><span class="title">${esc(r.name)}</span>
+      <span class="muted small">${esc(r.model)} · ${esc(r.ip)}</span>
+      <span style="flex:1"></span><button class="link" data-act="remove">Remove</button></div>${step}`;
+    el.querySelectorAll("[data-act]").forEach((b) => b.onclick = () => tvAction(b.dataset.act, r, el, b));
+    box.appendChild(el);
+  }
+}
+
+async function tvAction(act, r, el, btn) {
+  const msg = el.querySelector("[data-msg]");
+  if (act === "remove") {
+    if (!confirm(`Stop using SaverSwap with ${r.name}?`)) return;
+    data = await api("/api/rokus/remove", { ip: r.ip }); return renderAll();
+  }
+  if (act === "recheck") return refreshTvs();
+  if (act === "howto") return $("#devHelp").showModal();
+  btn.disabled = true;
+  if (act === "install" || act === "reinstall") {
+    const pw = el.querySelector("[data-pw]")?.value || "";
+    btn.textContent = "Installing…";
+    const res = await api("/api/rokus/install", { ip: r.ip, password: pw });
+    btn.disabled = false; btn.textContent = act === "install" ? "Install" : "Reinstall";
+    if (res.error) { if (msg) msg.textContent = res.error; return; }
+    data = res; await refreshTvs(); return;
+  }
+  if (act === "launch") {
+    await api("/api/rokus/launch", { ip: r.ip });
+    btn.disabled = false;
+  }
+}
+
+$("#scanBtn").onclick = async () => {
+  const out = $("#scanOut"), btn = $("#scanBtn");
+  btn.disabled = true; btn.textContent = "Searching your network…"; out.innerHTML = "";
+  const res = await api("/api/rokus/scan");
+  btn.disabled = false; btn.textContent = "Find my Roku";
+  if (res.error) { out.innerHTML = `<p class="err">${esc(res.error)}</p>`; return; }
+  const fresh = res.found.filter((f) => !f.added);
+  if (!res.found.length) {
+    out.innerHTML = `<p class="muted">No Roku found on ${esc(res.subnet)}. Is it on? You can also enter its address.</p>`;
+    return;
+  }
+  out.innerHTML = fresh.length ? '<p style="margin:10px 0 4px">Found:</p>' : '<p class="muted">Every Roku found is already added.</p>';
+  for (const f of fresh) {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.innerHTML = `<span><b>${esc(f.name)}</b> <span class="muted small">${esc(f.model)} · ${esc(f.ip)}</span></span>
+      <button class="primary">Use this TV</button>`;
+    row.querySelector("button").onclick = async () => {
+      data = await api("/api/rokus/add", { ip: f.ip }); out.innerHTML = ""; renderAll(); refreshTvs();
+    };
+    out.appendChild(row);
+  }
+};
+$("#manualBtn").onclick = () => $("#manualRow").classList.toggle("hidden");
+$("#manualAdd").onclick = async () => {
+  const res = await api("/api/rokus/add", { ip: $("#manualIp").value.trim() });
+  if (res.error) { $("#scanOut").innerHTML = `<p class="err">${esc(res.error)}</p>`; return; }
+  data = res; $("#manualRow").classList.add("hidden"); renderAll(); refreshTvs();
+};
+
+// ---------- scenes
+function renderScenes() {
   const box = $("#scenes");
   box.innerHTML = "";
-  if (!d.scenes.length) box.innerHTML = '<p class="empty">No scenes yet. Add one below.</p>';
-  for (const s of d.scenes) {
-    const b = document.createElement("button");
-    b.className = "scene" + (s.name === d.current ? " current" : "");
-    b.innerHTML = `<img alt="" loading="lazy"><div class="label"></div><span class="del" role="button">Delete</span>`;
-    b.querySelector("img").src = s.thumb + "?v=" + s.slug;
-    b.querySelector(".label").textContent = s.name;
-    b.onclick = async (e) => {
-      if (e.target.classList.contains("del")) {
-        if (confirm(`Delete "${s.name}"?`)) render(await api("/api/delete", { scene: s.slug }));
-        return;
-      }
-      render(await api("/api/select", { scene: s.slug }));
+  $("#scenesHint").textContent = data.scenes.length ? "Tap a picture to put it on the TV."
+    : "No scenes yet. Add the starter pack or paste a link below.";
+  for (const s of data.scenes) {
+    const el = document.createElement("div");
+    el.className = "scene" + (s.name === data.current ? " current" : "");
+    el.innerHTML = `<img alt="" loading="lazy"><div class="bar"><span class="name"></span>
+      <button class="link icon" title="Rename" aria-label="Rename">✎</button><button class="link icon" title="Delete" aria-label="Delete">✕</button></div>`;
+    el.querySelector("img").src = s.thumb + "?v=" + s.slug;
+    el.querySelector(".name").textContent = s.name;
+    el.querySelector("img").onclick = async () => { data = await api("/api/select", { scene: s.slug }); renderAll(); };
+    const [ren, del] = el.querySelectorAll("button");
+    ren.onclick = async () => {
+      const n = prompt("New name", s.name);
+      if (n && n.trim() && n !== s.name) { const r = await api("/api/rename", { scene: s.slug, name: n }); if (r.error) alert(r.error); else { data = r; renderAll(); } }
     };
-    box.appendChild(b);
+    del.onclick = async () => {
+      if (confirm(`Delete "${s.name}"?`)) { data = await api("/api/delete", { scene: s.slug }); renderAll(); }
+    };
+    box.appendChild(el);
   }
-  const jobs = $("#jobs");
-  jobs.innerHTML = "";
-  for (const j of [...d.jobs, ...Object.values(failed)]) {
-    const li = document.createElement("li");
-    if (j.status === "failed") { li.className = "failed"; failed[j.id] = j; }
-    li.textContent = `${j.name || j.url}: ${j.status === "failed" ? "couldn't add (" + j.error + ")" : j.status + "…"}`;
-    jobs.appendChild(li);
-  }
+  const left = data.starter_left;
+  $("#starter").classList.toggle("hidden", !left.length);
+  $("#starterList").textContent = left.join(", ");
+  const busy = data.jobs.some((j) => left.includes(j.name));
+  $("#starterBtn").disabled = busy;
+  $("#starterBtn").textContent = busy ? "Adding…" : "Add them";
 }
-
-async function refresh() { render(await api("/api/scene")); }
-
-for (const k of ["sound", "autostart"]) {
-  $("#" + k).onchange = async (e) => render(await api("/api/settings", { [k]: e.target.checked }));
-}
+$("#starterBtn").onclick = async () => { data = await api("/api/starter", {}); renderAll(); };
 
 $("#add").onsubmit = async (e) => {
   e.preventDefault();
@@ -124,8 +316,69 @@ $("#add").onsubmit = async (e) => {
   refresh();
 };
 
-refresh();
-setInterval(refresh, 4000);
+function renderJobs() {
+  const ul = $("#jobs");
+  ul.innerHTML = "";
+  for (const j of data.jobs) if (j.status === "failed") failed[j.id] = j;
+  const shown = [...data.jobs.filter((j) => j.status !== "failed"), ...Object.values(failed)];
+  for (const j of shown) {
+    const li = document.createElement("li");
+    li.className = j.status === "failed" ? "failed" : "";
+    li.textContent = `${j.name || j.url}: ${j.status === "failed" ? "couldn't add (" + j.error + ")" : j.status + "…"}`;
+    ul.appendChild(li);
+  }
+}
+
+// ---------- settings
+function renderSettings() {
+  const st = data.settings;
+  for (const k of ["autostart", "sound", "clock", "weather"]) $("#" + k).checked = st[k];
+  $("#place").textContent = st.place || "not set";
+  $("#units").value = st.units;
+  $("#weatherBox").classList.toggle("hidden", !st.weather);
+}
+for (const k of ["autostart", "sound", "clock", "weather"]) {
+  $("#" + k).onchange = async (e) => { data = await api("/api/settings", { [k]: e.target.checked }); renderAll(); };
+}
+$("#units").onchange = async (e) => { data = await api("/api/settings", { units: e.target.value }); renderAll(); };
+$("#placeBtn").onclick = async () => {
+  const out = $("#placeOut");
+  const res = await api("/api/geocode?q=" + encodeURIComponent($("#placeQ").value));
+  out.innerHTML = "";
+  if (res.error) { out.innerHTML = `<span class="err">${esc(res.error)}</span>`; return; }
+  if (!res.results.length) { out.innerHTML = '<span class="muted">Nothing found. Try a city name.</span>'; return; }
+  for (const p of res.results) {
+    const b = document.createElement("button");
+    b.textContent = p.place;
+    b.onclick = async () => {
+      data = await api("/api/settings", { lat: p.lat, lon: p.lon, place: p.place });
+      out.innerHTML = ""; $("#placeQ").value = ""; renderAll();
+    };
+    out.appendChild(b);
+  }
+};
+
+function renderAll() {
+  if (!data || data.error) return;
+  renderTvs(); renderScenes(); renderJobs(); renderSettings();
+  renderStorage();
+  $("#ver").textContent = "SaverSwap " + data.version;
+}
+
+async function refresh() { data = await api("/api/scene"); renderScenes(); renderJobs(); renderStorage(); }
+function storageText(s) {
+  const where = s.path === "/data" ? "the folder you set for <code>/data</code> in Docker" : `<code>${esc(s.path)}</code>`;
+  return `Videos are saved in ${where}: ${s.used_gb} GB used, ${s.free_gb} GB free.`;
+}
+function renderStorage() { $("#storage").innerHTML = storageText(data.storage); }
+
+(async () => {
+  data = await api("/api/scene");
+  renderAll();
+  refreshTvs();
+  setInterval(refresh, 4000);
+  setInterval(refreshTvs, 20000);
+})();
 </script>
 </body>
 </html>
