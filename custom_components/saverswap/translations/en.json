@@ -4,10 +4,88 @@
       "user": {
         "title": "Connect to SaverSwap",
         "description": "Enter the address of the computer running SaverSwap, like 192.168.1.10 (port 8099 is assumed). Set up the server first: https://github.com/HansDandle/SaverSwap",
-        "data": { "url": "SaverSwap address" }
+        "data": {
+          "url": "SaverSwap address"
+        }
       }
     },
-    "error": { "cannot_connect": "Couldn't reach SaverSwap at that address. Is it running, and is the address right?" },
-    "abort": { "already_configured": "That SaverSwap is already added." }
+    "error": {
+      "cannot_connect": "Couldn't reach SaverSwap at that address. Is it running, and is the address right?"
+    },
+    "abort": {
+      "already_configured": "That SaverSwap is already added."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "What to show on the TV",
+        "description": "These appear under the clock and weather while SaverSwap is on screen. Locks, doors, garage doors and alarms show in amber when they need attention.",
+        "data": {
+          "status_entities": "Show these",
+          "attention_only": "Only show locks, doors, covers and alarms when they need attention (unlocked, open, wet...)",
+          "labels": "Names on the TV (optional)"
+        },
+        "data_description": {
+          "labels": "One per line, like:  lock.front_door = Front door"
+        }
+      }
+    }
+  },
+  "services": {
+    "show_camera": {
+      "name": "Show camera on TV",
+      "description": "Puts a camera's picture in the corner of SaverSwap, refreshed every few seconds, for a while.",
+      "fields": {
+        "entity_id": {
+          "name": "Camera",
+          "description": "Camera to show."
+        },
+        "title": {
+          "name": "Title",
+          "description": "Label above the picture (default: camera name)."
+        },
+        "seconds": {
+          "name": "For how long",
+          "description": "Seconds to keep it on screen."
+        },
+        "refresh": {
+          "name": "Refresh every",
+          "description": "Seconds between new pictures."
+        },
+        "turn_on_tv": {
+          "name": "Bring up SaverSwap",
+          "description": "Also open SaverSwap on TVs that are idle (home screen or screensaver). Never interrupts something you're watching."
+        }
+      }
+    },
+    "show_message": {
+      "name": "Show message on TV",
+      "description": "Shows a line of text at the bottom of SaverSwap.",
+      "fields": {
+        "message": {
+          "name": "Message",
+          "description": "Text to show."
+        },
+        "seconds": {
+          "name": "For how long",
+          "description": "Seconds to keep it on screen."
+        },
+        "turn_on_tv": {
+          "name": "Bring up SaverSwap",
+          "description": "Also open SaverSwap on TVs that are idle."
+        }
+      }
+    },
+    "clear": {
+      "name": "Clear",
+      "description": "Removes the camera picture and/or message from the TV.",
+      "fields": {
+        "what": {
+          "name": "What",
+          "description": "all, camera or message"
+        }
+      }
+    }
   }
 }

@@ -13,6 +13,19 @@
         <Rectangle id="box" width="400" height="190" translation="[1460,25]" color="0x00000055" />
         <Label id="clock" translation="[1500,40]" color="0xFFFFFFFF" />
         <Label id="weather" translation="[1500,130]" color="0xFFFFFFDD" />
+        <!-- Home Assistant status lines go in here (under the weather) -->
+        <Group id="statusGroup" />
+        <!-- camera picture (bottom right) -->
+        <Group id="popup" visible="false" translation="[1196,560]">
+            <Rectangle width="684" height="460" color="0x000000AA" />
+            <Label id="popupTitle" translation="[22,14]" width="640" color="0xFFFFFFFF" />
+            <Poster id="popupImg" translation="[22,74]" width="640" height="364" loadDisplayMode="scaleToFit" />
+        </Group>
+        <!-- message banner (bottom centre) -->
+        <Group id="banner" visible="false">
+            <Rectangle id="bannerBg" height="110" color="0x000000AA" />
+            <Label id="bannerText" color="0xFFFFFFFF" />
+        </Group>
         <Label id="msg" width="1600" horizAlign="center" translation="[160,980]" color="0xFFFFFF99" />
         <!-- first-run help: shown while no scene is set up yet -->
         <Group id="setup" visible="false">
@@ -61,6 +74,17 @@
             m.fetch.observeField("error", "onError")
             m.fetch.observeField("sound", "onSound")
             m.fetch.observeField("setup", "onSetup")
+            m.fetch.observeField("status", "onStatus")
+            m.fetch.observeField("popupUrl", "onPopup")
+            m.fetch.observeField("popupTitle", "onPopup")
+            m.fetch.observeField("message", "onBanner")
+            m.statusGroup = m.top.findNode("statusGroup")
+            m.statusLabels = []
+            m.popup = m.top.findNode("popup")
+            m.top.findNode("popupTitle").font = makeFont(40)
+            m.banner = m.top.findNode("banner")
+            m.bannerText = m.top.findNode("bannerText")
+            m.bannerText.font = makeFont(52)
             m.fetch.control = "run"
             onOverlay()
         end sub
@@ -102,7 +126,7 @@
             showClock = m.fetch.clock
             m.clock.visible = showClock
             m.weatherLabel.text = m.fetch.weather
-            m.box.visible = showClock or m.fetch.weather <> ""
+            m.box.visible = showClock or m.fetch.weather <> "" or (m.statusLabels <> invalid and m.statusLabels.Count() > 0)
             updateClock()
         end sub
 
@@ -126,6 +150,14 @@
             else
                 y = y + 10
             end if
+            if m.statusLabels <> invalid
+                for each l in m.statusLabels
+                    w = l.boundingRect().width
+                    l.translation = [right - pad - w, y]
+                    if w > widest then widest = w
+                    y = y + 52
+                end for
+            end if
             m.box.width = widest + pad * 2
             m.box.height = y - 25 + 20
             m.box.translation = [right - m.box.width, 25]
@@ -137,6 +169,49 @@
             if url <> ""
                 m.top.findNode("qr").uri = url + "/qr.png?text=" + url
                 m.setupText.text = "Scan with your phone, or open  " + url
+            end if
+        end sub
+
+        ' Status lines from Home Assistant, e.g. "Front door: Unlocked" (alerts in amber).
+        sub onStatus()
+            items = ParseJson(m.fetch.status)
+            if items = invalid then items = []
+            m.statusGroup.removeChildrenIndex(m.statusGroup.getChildCount(), 0)
+            m.statusLabels = []
+            for each it in items
+                l = m.statusGroup.createChild("Label")
+                l.font = makeFont(38)
+                l.text = it.text
+                if it.alert = true
+                    l.color = "0xFFC24DFF"
+                else
+                    l.color = "0xFFFFFFDD"
+                end if
+                m.statusLabels.push(l)
+            end for
+            onOverlay()
+        end sub
+
+        ' Camera picture (or any picture) pushed by Home Assistant for a little while.
+        sub onPopup()
+            url = m.fetch.popupUrl
+            m.popup.visible = (url <> "")
+            if url <> ""
+                m.top.findNode("popupImg").uri = url
+                m.top.findNode("popupTitle").text = m.fetch.popupTitle
+            end if
+        end sub
+
+        sub onBanner()
+            text = m.fetch.message
+            m.banner.visible = (text <> "")
+            if text <> ""
+                m.bannerText.text = text
+                w = m.bannerText.boundingRect().width
+                bg = m.top.findNode("bannerBg")
+                bg.width = w + 80
+                bg.translation = [(1920 - w - 80) / 2, 920]
+                m.bannerText.translation = [(1920 - w) / 2, 940]
             end if
         end sub
 

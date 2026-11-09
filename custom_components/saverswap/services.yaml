@@ -1,0 +1,43 @@
+show_camera:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          domain: camera
+    title:
+      selector:
+        text:
+    seconds:
+      default: 30
+      selector:
+        number: { min: 5, max: 600, unit_of_measurement: s }
+    refresh:
+      default: 5
+      selector:
+        number: { min: 1, max: 60, unit_of_measurement: s }
+    turn_on_tv:
+      default: true
+      selector:
+        boolean:
+show_message:
+  fields:
+    message:
+      required: true
+      selector:
+        text:
+    seconds:
+      default: 30
+      selector:
+        number: { min: 3, max: 3600, unit_of_measurement: s }
+    turn_on_tv:
+      default: false
+      selector:
+        boolean:
+clear:
+  fields:
+    what:
+      default: all
+      selector:
+        select:
+          options: [all, camera, message]

@@ -88,6 +88,28 @@ You get a **SaverSwap** device with:
 | `button.saverswap_show_on_<tv>` | show SaverSwap on that TV now |
 | `button.saverswap_add_starter_pack` | add the starter scenes |
 | `sensor.saverswap_downloads`, `sensor.saverswap_free_space` | what's being added, disk space |
+| actions `saverswap.show_camera`, `saverswap.show_message`, `saverswap.clear` | put a camera picture or a message on the TV |
+
+### On the TV: status lines, cameras and messages
+
+* **Status lines.** In **Settings → Devices & services → SaverSwap → Configure**, pick entities to show under the clock: locks, doors, garage, thermostat, calendar, what's playing, timers, people. Locks and doors that need attention (unlocked, open) show in amber. Turn on **only when they need attention** to keep the screen clean, and rename lines for the TV (`lock.front_door = Front door`).
+* **Camera in the corner:** the action `saverswap.show_camera` shows a camera's picture, refreshed every few seconds, for as long as you say. With **Bring up SaverSwap** on, it also opens SaverSwap on TVs that are idle (home screen or screensaver); it never interrupts something you're watching. A Roku can only play one video at a time, so cameras are refreshed still pictures, not live video.
+* **Messages:** the action `saverswap.show_message` shows a line of text at the bottom ("Laundry's done").
+
+Doorbell example:
+
+```yaml
+- alias: Doorbell on the TV
+  triggers:
+    - trigger: state
+      entity_id: event.front_doorbell_ring   # your doorbell's event or binary_sensor
+  actions:
+    - action: saverswap.show_camera
+      data:
+        entity_id: camera.front_door
+        title: Someone's at the door
+        seconds: 45
+```
 
 Example dashboard card:
 
@@ -138,6 +160,10 @@ Example automation:
 | POST | `/api/rokus/add`, `/api/rokus/remove` | `{"ip": "…"}` | add or remove a TV |
 | POST | `/api/rokus/install` | `{"ip": "…", "password": "…"}` | install the app on a TV |
 | POST | `/api/rokus/launch` | `{"ip": "…"}` | show SaverSwap on a TV now |
+| POST | `/api/overlay/status` | `{"items": [{"text": "Front door: Unlocked", "alert": true}]}` | status lines under the clock |
+| POST | `/api/overlay/popup?title=…&seconds=30&launch=1` | a JPEG | picture in the corner |
+| POST | `/api/overlay/message` | `{"text": "…", "seconds": 30}` | message banner |
+| POST | `/api/overlay/clear` | `{"what": "all"}` | remove picture/message |
 
 ## License
 

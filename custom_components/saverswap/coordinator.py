@@ -39,6 +39,14 @@ class SaverSwapClient:
             return data
 
 
+    async def post_raw(self, path: str, data: bytes, params: dict[str, Any]) -> None:
+        async with self._session.post(f"{self.url}{path}", data=data, params=params,
+                                      headers={"Content-Type": "image/jpeg"},
+                                      timeout=aiohttp.ClientTimeout(total=30)) as r:
+            if r.status >= 400:
+                raise HomeAssistantError(f"SaverSwap answered {r.status}")
+
+
 class SaverSwapCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Keeps the server's state (scenes, settings, TVs, downloads) fresh."""
 

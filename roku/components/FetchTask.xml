@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Background polling (network calls can't run on the render thread): the current
-     scene and settings from the SaverSwap server every 10 seconds, and the weather
+     scene and settings from the SaverSwap server every 2 seconds, and the weather
      from Open-Meteo every 15 minutes when a location is set. -->
 <component name="FetchTask" extends="Task">
     <interface>
@@ -11,6 +11,11 @@
         <field id="error" type="string" />
         <!-- web page address, set while there's nothing to play yet -->
         <field id="setup" type="string" />
+        <!-- Home Assistant extras: status lines (JSON), camera picture, message -->
+        <field id="status" type="string" />
+        <field id="popupUrl" type="string" />
+        <field id="popupTitle" type="string" />
+        <field id="message" type="string" />
     </interface>
     <script type="text/brightscript"><![CDATA[
         sub init()
@@ -60,10 +65,26 @@
                     end if
                     o = s.overlay
                     if o <> invalid
+                        st = "[]"
+                        if o.status <> invalid then st = FormatJson(o.status)
+                        if st <> m.top.status then m.top.status = st
+                        pu = ""
+                        pt = ""
+                        if o.popup <> invalid
+                            pu = o.popup.url
+                            pt = o.popup.title
+                        end if
+                        if pu <> m.top.popupUrl then m.top.popupUrl = pu
+                        if pt <> m.top.popupTitle then m.top.popupTitle = pt
+                        msg = ""
+                        if o.message <> invalid then msg = o.message
+                        if msg <> m.top.message then m.top.message = msg
+                    end if
+                    if o <> invalid
                         if (o.clock = true) <> m.top.clock then m.top.clock = (o.clock = true)
                         if (o.sound = true) <> m.top.sound then m.top.sound = (o.sound = true)
                         if o.weather = true
-                            if tick - lastWeather >= 90
+                            if tick - lastWeather >= 450
                                 url = "https://api.open-meteo.com/v1/forecast?latitude=" + Str(o.lat).Trim() + "&longitude=" + Str(o.lon).Trim() + "&current=temperature_2m,weather_code&temperature_unit=" + o.units
                                 w = getJson(url)
                                 if w <> invalid and w.current <> invalid
@@ -78,7 +99,8 @@
                         end if
                     end if
                 end if
-                sleep(10000)
+                ' every 2 s, so camera pictures and messages show up quickly
+                sleep(2000)
                 tick = tick + 1
             end while
         end sub

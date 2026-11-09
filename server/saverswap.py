@@ -31,7 +31,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import rokus
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 LOOP_SECONDS = 1200  # files are repeated to ~20 min: the Roku blinks black for ~1 s on each loop
 SEAMLESS_UNDER = 120  # silent clips shorter than this get a crossfaded, seamless loop
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -284,6 +284,20 @@ def add_video(store, job_id, url, name):
 
 _queue = threading.Lock()  # one download at a time
 
+# Things Home Assistant (or anything) puts on the screen; kept in memory only.
+live = {"status": [], "popup": None, "popup_img": b"", "popup_ver": 0, "message": None}
+
+
+def launch_if_idle(store):
+    """Bring SaverSwap up on TVs sitting on the Roku home screen or its screensaver."""
+    for r in store.state["rokus"]:
+        try:
+            active = rokus._get(f"http://{r['ip']}:{rokus.ECP}/query/active-app", 3)
+            if "<screensaver" in active or 'type="home"' in active or "<app>Roku</app>" in active:
+                rokus.launch(r["ip"])
+        except Exception:
+            pass
+
 
 def queue_video(store, url, name, select=True):
     job_id = uuid.uuid4().hex[:8]
@@ -381,7 +395,12 @@ class Handler(BaseHTTPRequestHandler):
             "scenes": [{"name": x["name"], "slug": x["slug"], "thumb": f"{b}/thumbs/{x['slug']}.jpg"}
                        for x in st["scenes"]],
             "overlay": {"clock": st["clock"], "weather": bool(st["weather"] and st["lat"] is not None),
-                        "lat": st["lat"], "lon": st["lon"], "units": st["units"], "sound": st["sound"]},
+                        "lat": st["lat"], "lon": st["lon"], "units": st["units"], "sound": st["sound"],
+                        "status": live["status"],
+                        "popup": ({"url": f"{b}/popup.jpg?v={live['popup_ver']}", "title": live["popup"]["title"]}
+                                  if live["popup"] and live["popup"]["until"] > time.time() else None),
+                        "message": (live["message"]["text"]
+                                    if live["message"] and live["message"]["until"] > time.time() else None)},
             "settings": {k: st[k] for k in ("sound", "autostart", "units", "clock", "weather", "place")},
             "rokus": [{"ip": r["ip"], "name": r["name"], "model": r.get("model", ""),
                        "saved_password": bool(r.get("password"))} for r in st["rokus"]],
@@ -433,6 +452,17 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"results": [
                 {"place": ", ".join(x for x in (p.get("name"), p.get("admin1"), p.get("country_code")) if x),
                  "lat": round(p["latitude"], 3), "lon": round(p["longitude"], 3)} for p in res]})
+        if path == "/popup.jpg":
+            data = live["popup_img"]
+            if not data:
+                return self.send_json({"error": "no picture"}, 404)
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if path == "/qr.png":
             return self.send_qr((q.get("text") or [self.base_url()])[0])
         if path == "/api/log":  # diagnostics from the Roku app
@@ -447,7 +477,22 @@ class Handler(BaseHTTPRequestHandler):
     # ---- POST
 
     def do_POST(self):
-        path = urlparse(self.path).path
+        u = urlparse(self.path)
+        path = u.path
+        if path == "/api/overlay/popup":
+            # body = a JPEG (e.g. a camera snapshot); ?title=...&seconds=30&launch=1
+            q = parse_qs(u.query)
+            n = int(self.headers.get("Content-Length") or 0)
+            img = self.rfile.read(n) if n else b""
+            if not img:
+                return self.send_json({"error": "send a JPEG as the request body"}, 400)
+            seconds = max(3, min(600, float((q.get("seconds") or ["30"])[0])))
+            fresh = not (live["popup"] and live["popup"]["until"] > time.time())
+            live["popup_img"], live["popup_ver"] = img, live["popup_ver"] + 1
+            live["popup"] = {"title": (q.get("title") or [""])[0][:80], "until": time.time() + seconds}
+            if fresh and (q.get("launch") or ["0"])[0] in ("1", "true"):
+                threading.Thread(target=launch_if_idle, args=(self.store,), daemon=True).start()
+            return self.send_json({"ok": True})
         body = self.read_json()
         st = self.store.state
         try:
@@ -572,7 +617,31 @@ class Handler(BaseHTTPRequestHandler):
         self.store.scan()
         return self.send_json(self.payload())
 
+    def p_overlay_status(self, body, st):
+        items = body.get("items") or []
+        live["status"] = [{"text": str(i.get("text", ""))[:60], "alert": bool(i.get("alert"))}
+                          for i in items if isinstance(i, dict) and i.get("text")][:6]
+        return self.send_json({"ok": True})
+
+    def p_overlay_message(self, body, st):
+        text = str(body.get("text") or "").strip()[:120]
+        seconds = max(3, min(3600, float(body.get("seconds") or 30)))
+        live["message"] = {"text": text, "until": time.time() + seconds} if text else None
+        if text and body.get("launch"):
+            threading.Thread(target=launch_if_idle, args=(self.store,), daemon=True).start()
+        return self.send_json({"ok": True})
+
+    def p_overlay_clear(self, body, st):
+        what = body.get("what", "all")
+        if what in ("popup", "all"):
+            live["popup"] = None
+        if what in ("message", "all"):
+            live["message"] = None
+        return self.send_json({"ok": True})
+
     POSTS = {
+        "/api/overlay/status": p_overlay_status, "/api/overlay/message": p_overlay_message,
+        "/api/overlay/clear": p_overlay_clear,
         "/api/select": p_select, "/api/add": p_add, "/api/starter": p_starter,
         "/api/delete": p_delete, "/api/rename": p_rename, "/api/settings": p_settings,
         "/api/rescan": p_rescan, "/api/rokus/add": p_roku_add, "/api/rokus/remove": p_roku_remove,
