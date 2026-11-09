@@ -1,0 +1,9 @@
+title=SaverSwap
+major_version=1
+minor_version=1
+build_version=4
+mm_icon_focus_hd=pkg:/images/icon_hd.png
+mm_icon_focus_fhd=pkg:/images/icon_fhd.png
+splash_color=#000000
+splash_min_time=0
+ui_resolutions=fhd

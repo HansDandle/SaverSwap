@@ -1,0 +1,24 @@
+# Example dashboard cards (paste into a dashboard's YAML editor, or add each
+# card with "Manual" card). The preview image loads straight from the SaverSwap
+# server, so it shows when your browser can reach that server over plain http.
+type: vertical-stack
+cards:
+  - type: tile
+    entity: select.saverswap_scene
+    name: Screensaver
+    features:
+      - type: select-options
+  - type: markdown
+    content: >-
+      {% set cur = states('sensor.saverswap') %}
+      {% set s = (state_attr('sensor.saverswap', 'scenes') or [])
+                 | selectattr('name', 'eq', cur) | list | first %}
+      {% if s %}<img src="{{ s.thumb }}" width="100%">{% endif %}
+  - type: entities
+    entities:
+      - entity: switch.saverswap_sound
+        name: Sound
+      - entity: switch.saverswap_autostart
+        name: Start when the TV goes idle
+      - entity: input_text.saverswap_link
+        name: Add a video (paste link)

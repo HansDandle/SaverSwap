@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Background polling (network calls can't run on the render thread):
+     the current scene from the SaverSwap server every minute, and the weather
+     from Open-Meteo every 15 minutes when the server has a location set. -->
+<component name="FetchTask" extends="Task">
+    <interface>
+        <field id="video" type="string" />
+        <field id="clock" type="boolean" value="true" />
+        <field id="sound" type="boolean" value="false" />
+        <field id="weather" type="string" />
+        <field id="error" type="string" />
+    </interface>
+    <script type="text/brightscript"><![CDATA[
+        sub init()
+            m.top.functionName = "run"
+        end sub
+
+        function getJson(url as string) as object
+            x = CreateObject("roUrlTransfer")
+            x.SetUrl(url)
+            x.SetCertificatesFile("common:/certs/ca-bundle.crt")
+            x.InitClientCertificates()
+            x.EnableEncodings(true)
+            body = x.GetToString()
+            if body = "" then return invalid
+            return ParseJson(body)
+        end function
+
+        function describe(code as integer) as string
+            if code = 0 then return "Clear"
+            if code <= 2 then return "Partly cloudy"
+            if code = 3 then return "Cloudy"
+            if code <= 48 then return "Fog"
+            if code <= 57 then return "Drizzle"
+            if code <= 67 then return "Rain"
+            if code <= 77 then return "Snow"
+            if code <= 82 then return "Showers"
+            if code <= 86 then return "Snow showers"
+            return "Storms"
+        end function
+
+        sub run()
+            cfg = ParseJson(ReadAsciiFile("pkg:/config.json"))
+            server = cfg.server
+            minutes = 15
+            while true
+                s = getJson(server + "/api/scene")
+                if s = invalid
+                    m.top.error = "Can't reach the SaverSwap server at " + server
+                else
+                    m.top.error = ""
+                    if s.video <> invalid and s.video <> m.top.video then m.top.video = s.video
+                    o = s.overlay
+                    if o <> invalid
+                        m.top.clock = (o.clock = true)
+                        snd = (o.sound = true)
+                        if snd <> m.top.sound then m.top.sound = snd
+                        if o.weather = true and minutes >= 15
+                            url = "https://api.open-meteo.com/v1/forecast?latitude=" + Str(o.lat).Trim() + "&longitude=" + Str(o.lon).Trim() + "&current=temperature_2m,weather_code&temperature_unit=" + o.units
+                            w = getJson(url)
+                            if w <> invalid and w.current <> invalid
+                                t = Int(w.current.temperature_2m + 0.5)
+                                m.top.weather = t.ToStr() + Chr(176) + "  " + describe(w.current.weather_code)
+                                minutes = 0
+                            end if
+                        else if o.weather <> true
+                            m.top.weather = ""
+                        end if
+                    end if
+                end if
+                ' check every 10 s so scene/sound changes show up quickly
+                for i = 1 to 6
+                    sleep(10000)
+                    s = getJson(server + "/api/scene")
+                    if s <> invalid
+                        if s.video <> invalid and s.video <> m.top.video then m.top.video = s.video
+                        if s.overlay <> invalid
+                            snd = (s.overlay.sound = true)
+                            if snd <> m.top.sound then m.top.sound = snd
+                        end if
+                    end if
+                end for
+                minutes = minutes + 1
+            end while
+        end sub
+    ]]></script>
+</component>

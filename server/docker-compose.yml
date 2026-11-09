@@ -1,0 +1,18 @@
+services:
+  saverswap:
+    build: .
+    container_name: saverswap
+    ports:
+      - "8099:8099"
+    volumes:
+      - ./data:/data
+    environment:
+      # Your Roku's IP (Settings > Network > About): SaverSwap starts when its screensaver does.
+      # Several Rokus: "192.168.1.50,192.168.1.51"
+      SAVERSWAP_ROKU: "192.168.1.50"
+      # Weather overlay: your latitude/longitude (remove both to hide the weather)
+      SAVERSWAP_LAT: "40.71"
+      SAVERSWAP_LON: "-74.01"
+      SAVERSWAP_UNITS: fahrenheit   # or celsius
+      # SAVERSWAP_CLOCK: "0"        # hide the clock
+    restart: unless-stopped

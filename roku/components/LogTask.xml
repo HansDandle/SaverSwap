@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Sends one diagnostic line to the server's /api/log (shown in the server's log). -->
+<component name="LogTask" extends="Task">
+    <interface>
+        <field id="server" type="string" />
+        <field id="msg" type="string" />
+    </interface>
+    <script type="text/brightscript"><![CDATA[
+        sub init()
+            m.top.functionName = "send"
+        end sub
+
+        sub send()
+            x = CreateObject("roUrlTransfer")
+            x.SetUrl(m.top.server + "/api/log?msg=" + x.Escape(m.top.msg))
+            x.GetToString()
+        end sub
+    ]]></script>
+</component>

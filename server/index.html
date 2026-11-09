@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SaverSwap</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #667085;
+    --accent: #1f7a8c; --accent-text: #ffffff; --border: #dde1e7; --danger: #b42318;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #11151c; --card: #1a202a; --text: #e8ebf0; --muted: #98a2b3;
+            --accent: #3ba7bd; --accent-text: #0b1015; --border: #2c3442; --danger: #f97066; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 960px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  p.sub { color: var(--muted); margin: 0 0 20px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
+  .scene { background: var(--card); border: 2px solid var(--border); border-radius: 12px;
+           overflow: hidden; cursor: pointer; position: relative; padding: 0; text-align: left;
+           color: inherit; font: inherit; }
+  .scene img { display: block; width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #000; }
+  .scene .label { padding: 8px 10px; font-weight: 600; }
+  .scene.current { border-color: var(--accent); }
+  .scene.current .label::after { content: " · on the TV"; color: var(--accent); font-weight: 500; }
+  .scene .del { position: absolute; top: 6px; right: 6px; border: 0; border-radius: 8px;
+                background: rgba(0,0,0,.55); color: #fff; padding: 4px 8px; cursor: pointer; font-size: .85rem; }
+  form { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+         padding: 14px; margin: 24px 0 8px; display: grid; gap: 10px; }
+  form label { font-weight: 600; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  input { flex: 1 1 220px; min-width: 0; padding: 10px 12px; border-radius: 8px;
+          border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; }
+  button.go { padding: 10px 18px; border: 0; border-radius: 8px; background: var(--accent);
+              color: var(--accent-text); font: inherit; font-weight: 600; cursor: pointer; }
+  .hint { color: var(--muted); font-size: .9rem; margin: 0; }
+  .jobs { margin: 8px 0 0; padding: 0; list-style: none; }
+  .jobs li { color: var(--muted); }
+  .jobs li.failed { color: var(--danger); }
+  .empty { color: var(--muted); }
+  .toggles { display: flex; gap: 20px; flex-wrap: wrap; margin: 0 0 16px; }
+  .toggles label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .toggles input { width: 20px; height: 20px; flex: none; accent-color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>SaverSwap</h1>
+  <p class="sub">Tap a scene to put it on the TV.</p>
+  <div class="toggles">
+    <label><input type="checkbox" id="sound"> Sound</label>
+    <label id="autoWrap"><input type="checkbox" id="autostart"> Start when the TV goes idle</label>
+  </div>
+  <div id="scenes" class="grid"></div>
+
+  <form id="add">
+    <label for="url">Add a video</label>
+    <div class="row">
+      <input id="url" type="url" placeholder="YouTube or .mp4 link" required>
+      <input id="name" type="text" placeholder="Name (optional)">
+      <button class="go" type="submit">Add</button>
+    </div>
+    <p class="hint">The first 20 minutes are saved without sound. Short clips are repeated so the loop rarely restarts.</p>
+    <ul id="jobs" class="jobs"></ul>
+  </form>
+</main>
+<script>
+const $ = (s) => document.querySelector(s);
+let failed = {};
+
+async function api(path, body) {
+  const r = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" },
+                                       body: JSON.stringify(body) } : undefined);
+  return r.json();
+}
+
+function render(d) {
+  $("#sound").checked = d.settings.sound;
+  $("#autostart").checked = d.settings.autostart;
+  $("#autoWrap").hidden = !d.settings.rokus.length;
+  const box = $("#scenes");
+  box.innerHTML = "";
+  if (!d.scenes.length) box.innerHTML = '<p class="empty">No scenes yet. Add one below.</p>';
+  for (const s of d.scenes) {
+    const b = document.createElement("button");
+    b.className = "scene" + (s.name === d.current ? " current" : "");
+    b.innerHTML = `<img alt="" loading="lazy"><div class="label"></div><span class="del" role="button">Delete</span>`;
+    b.querySelector("img").src = s.thumb + "?v=" + s.slug;
+    b.querySelector(".label").textContent = s.name;
+    b.onclick = async (e) => {
+      if (e.target.classList.contains("del")) {
+        if (confirm(`Delete "${s.name}"?`)) render(await api("/api/delete", { scene: s.slug }));
+        return;
+      }
+      render(await api("/api/select", { scene: s.slug }));
+    };
+    box.appendChild(b);
+  }
+  const jobs = $("#jobs");
+  jobs.innerHTML = "";
+  for (const j of [...d.jobs, ...Object.values(failed)]) {
+    const li = document.createElement("li");
+    if (j.status === "failed") { li.className = "failed"; failed[j.id] = j; }
+    li.textContent = `${j.name || j.url}: ${j.status === "failed" ? "couldn't add (" + j.error + ")" : j.status + "…"}`;
+    jobs.appendChild(li);
+  }
+}
+
+async function refresh() { render(await api("/api/scene")); }
+
+for (const k of ["sound", "autostart"]) {
+  $("#" + k).onchange = async (e) => render(await api("/api/settings", { [k]: e.target.checked }));
+}
+
+$("#add").onsubmit = async (e) => {
+  e.preventDefault();
+  const r = await api("/api/add", { url: $("#url").value, name: $("#name").value });
+  if (r.error) { alert(r.error); return; }
+  $("#url").value = ""; $("#name").value = "";
+  refresh();
+};
+
+refresh();
+setInterval(refresh, 4000);
+</script>
+</body>
+</html>

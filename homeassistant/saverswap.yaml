@@ -1,0 +1,114 @@
+# SaverSwap for Home Assistant (optional). A "package": copy this file to
+# /config/packages/saverswap.yaml, make sure configuration.yaml has
+#
+#   homeassistant:
+#     packages: !include_dir_named packages
+#
+# then replace SAVERSWAP_HOST below with the address of the computer running
+# saverswap.py (e.g. 192.168.1.10) and restart Home Assistant.
+#
+# You get:
+#   select.saverswap_scene        pick the scene (dashboards, automations, voice)
+#   sensor.saverswap              current scene; attributes: scenes, jobs
+#   input_text.saverswap_link     paste a link here to add a video
+
+rest:
+  - resource: http://SAVERSWAP_HOST:8099/api/scene
+    scan_interval: 30
+    sensor:
+      - name: SaverSwap
+        unique_id: saverswap
+        icon: mdi:television-ambient-light
+        value_template: "{{ value_json.current or 'none' }}"
+        json_attributes:
+          - scenes
+          - jobs
+          - settings
+
+rest_command:
+  saverswap_select:
+    url: http://SAVERSWAP_HOST:8099/api/select
+    method: POST
+    content_type: application/json
+    payload: '{"scene": {{ scene | to_json }}}'
+  saverswap_settings:
+    url: http://SAVERSWAP_HOST:8099/api/settings
+    method: POST
+    content_type: application/json
+    payload: '{"{{ key }}": {{ value | bool | to_json }}}'
+  saverswap_add:
+    url: http://SAVERSWAP_HOST:8099/api/add
+    method: POST
+    content_type: application/json
+    payload: '{"url": {{ url | to_json }}}'
+
+template:
+  - select:
+      - name: SaverSwap scene
+        unique_id: saverswap_scene
+        icon: mdi:television-ambient-light
+        state: "{{ states('sensor.saverswap') }}"
+        options: >-
+          {{ (state_attr('sensor.saverswap', 'scenes') or []) | map(attribute='name') | list }}
+        select_option:
+          - action: rest_command.saverswap_select
+            data:
+              scene: "{{ option }}"
+          - action: homeassistant.update_entity
+            target:
+              entity_id: sensor.saverswap
+  - switch:
+      - name: SaverSwap sound
+        unique_id: saverswap_sound
+        icon: mdi:volume-high
+        state: "{{ (state_attr('sensor.saverswap', 'settings') or {}).get('sound', false) }}"
+        turn_on:
+          - action: rest_command.saverswap_settings
+            data: { key: sound, value: true }
+          - action: homeassistant.update_entity
+            target: { entity_id: sensor.saverswap }
+        turn_off:
+          - action: rest_command.saverswap_settings
+            data: { key: sound, value: false }
+          - action: homeassistant.update_entity
+            target: { entity_id: sensor.saverswap }
+      - name: SaverSwap autostart
+        unique_id: saverswap_autostart
+        icon: mdi:television-play
+        state: "{{ (state_attr('sensor.saverswap', 'settings') or {}).get('autostart', false) }}"
+        turn_on:
+          - action: rest_command.saverswap_settings
+            data: { key: autostart, value: true }
+          - action: homeassistant.update_entity
+            target: { entity_id: sensor.saverswap }
+        turn_off:
+          - action: rest_command.saverswap_settings
+            data: { key: autostart, value: false }
+          - action: homeassistant.update_entity
+            target: { entity_id: sensor.saverswap }
+
+input_text:
+  saverswap_link:
+    name: SaverSwap link
+    icon: mdi:link-variant-plus
+    max: 255
+
+automation:
+  - id: saverswap_add_from_link
+    alias: SaverSwap - add video from pasted link
+    triggers:
+      - trigger: state
+        entity_id: input_text.saverswap_link
+    conditions:
+      - condition: template
+        value_template: "{{ 'http' in trigger.to_state.state }}"
+    actions:
+      - action: rest_command.saverswap_add
+        data:
+          url: "{{ trigger.to_state.state }}"
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.saverswap_link
+        data:
+          value: ""
+    mode: queued
