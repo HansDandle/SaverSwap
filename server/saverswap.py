@@ -201,8 +201,8 @@ def add_video(store, job_id, url, name):
             fade = min(2.0, dur / 4)
             run(["ffmpeg", "-v", "error", "-y", "-i", src, "-filter_complex",
                  f"[0:v]fps=30,scale=-2:'min(1080,ih)',format=yuv420p,split[s1][s2];"
-                 f"[s1]trim={fade}:{dur},setpts=PTS-STARTPTS,settb=AVTB[a];"
-                 f"[s2]trim=0:{fade},setpts=PTS-STARTPTS,settb=AVTB[b];"
+                 f"[s1]trim={fade}:{dur},setpts=PTS-STARTPTS,settb=AVTB,fps=30[a];"
+                 f"[s2]trim=0:{fade},setpts=PTS-STARTPTS,settb=AVTB,fps=30[b];"
                  f"[a][b]xfade=transition=fade:duration={fade}:offset={dur - 2 * fade:.3f}[v]",
                  "-map", "[v]", "-an"] + ENC + [clean])
             dur -= fade

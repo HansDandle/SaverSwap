@@ -67,15 +67,49 @@ Options: `--data` (video folder), `--port` (default 8099), `--url` (the address 
 
 ## Home Assistant (optional)
 
-1. Copy `homeassistant/saverswap.yaml` to `/config/packages/`, replace `SAVERSWAP_HOST` with the server's address, and make sure packages are enabled (see the comment at the top of the file). Then restart.
-2. Add the cards from `homeassistant/dashboard-card.yaml` to a dashboard.
+SaverSwap has a Home Assistant integration: no YAML, everything set up from the UI.
 
-You get:
+**Install it**, any one of these ways:
 
-* `select.saverswap_scene`
-* `switch.saverswap_sound`
-* `switch.saverswap_autostart`
-* `input_text.saverswap_link` for pasting links
+* **Home Assistant 2026.11 or newer:** Settings → Marketplace → ⋮ → Custom repositories → add `https://github.com/HansDandle/SaverSwap` (type: Integration), then install **SaverSwap**.
+* **With HACS** (older versions): HACS → ⋮ → Custom repositories → same URL, type Integration → install.
+* **By hand:** copy `custom_components/saverswap` into your Home Assistant `config/custom_components/` folder.
+
+Restart Home Assistant, then go to **Settings → Devices & services → Add integration → SaverSwap** and enter the server's address (like `192.168.1.10`).
+
+You get a **SaverSwap** device with:
+
+| Entity | What it does |
+|---|---|
+| `select.saverswap_scene` | pick the scene |
+| `image.saverswap_now_showing` | picture of the current scene |
+| `text.saverswap_add_video_link` | paste a link to add a video (`Name https://…` names it) |
+| `switch.saverswap_sound`, `switch.saverswap_autostart` | sound, start when the TV goes idle |
+| `switch.saverswap_clock`, `switch.saverswap_weather` | overlay on/off |
+| `button.saverswap_show_on_<tv>` | show SaverSwap on that TV now |
+| `button.saverswap_add_starter_pack` | add the starter scenes |
+| `sensor.saverswap_downloads`, `sensor.saverswap_free_space` | what's being added, disk space |
+
+Example dashboard card:
+
+```yaml
+type: vertical-stack
+cards:
+  - type: tile
+    entity: select.saverswap_scene
+    name: Screensaver
+    features:
+      - type: select-options
+  - type: picture-entity
+    entity: image.saverswap_now_showing
+    show_name: false
+    show_state: false
+  - type: entities
+    entities:
+      - switch.saverswap_sound
+      - switch.saverswap_autostart
+      - text.saverswap_add_video_link
+```
 
 Example automation:
 

@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to SaverSwap",
+        "description": "Enter the address of the computer running SaverSwap, like 192.168.1.10 (port 8099 is assumed). Set up the server first: https://github.com/HansDandle/SaverSwap",
+        "data": { "url": "SaverSwap address" }
+      }
+    },
+    "error": { "cannot_connect": "Couldn't reach SaverSwap at that address. Is it running, and is the address right?" },
+    "abort": { "already_configured": "That SaverSwap is already added." }
+  }
+}
