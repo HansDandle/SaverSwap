@@ -71,8 +71,7 @@ SaverSwap has a Home Assistant integration: no YAML, everything set up from the 
 
 **Install it**, any one of these ways:
 
-* **Home Assistant 2026.11 or newer:** Settings → Marketplace → ⋮ → Custom repositories → add `https://github.com/HansDandle/SaverSwap` (type: Integration), then install **SaverSwap**.
-* **With HACS** (older versions): HACS → ⋮ → Custom repositories → same URL, type Integration → install.
+* **From HACS, or the built-in Marketplace that replaces it in Home Assistant 2026.11:** add `https://github.com/HansDandle/SaverSwap` as a custom repository (type: Integration), then install **SaverSwap**.
 * **By hand:** copy `custom_components/saverswap` into your Home Assistant `config/custom_components/` folder.
 
 Restart Home Assistant, then go to **Settings → Devices & services → Add integration → SaverSwap** and enter the server's address (like `192.168.1.10`).
