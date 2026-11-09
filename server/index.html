@@ -200,10 +200,14 @@ function renderTvs() {
         <button class="link" data-act="howto" style="padding-left:0">Click here to learn how to set your Roku TV to Developer Mode</button><br>
         <button class="primary" data-act="recheck" style="margin-top:8px">I did it, check again</button></div>`;
     } else if (!s.installed) {
-      step = `<div class="step"><b>Step 2: install SaverSwap</b>
-        <div class="row" style="margin-top:8px">
-          <input type="password" placeholder="${r.saved_password ? "Password saved (type to change)" : "Developer Mode password you set"}" data-pw>
+      step = `<div class="step"><b>Step 2: install SaverSwap</b> <span class="ok small">✓ Developer Mode is on</span>
+        <label class="small" style="display:block;margin-top:8px" for="pw-${esc(r.ip)}">
+          Type the password you made up on the TV's Developer Mode screen:</label>
+        <div class="row" style="margin-top:4px">
+          <input type="password" id="pw-${esc(r.ip)}" autocomplete="off"
+                 placeholder="${r.saved_password ? "Saved (type to change)" : "Developer Mode password"}" data-pw>
           <button class="primary" data-act="install">Install</button></div>
+        <div class="small muted" style="margin-top:4px">Forgot it? Do the remote button sequence again and set a new one.</div>
         <div class="small err" data-msg></div></div>`;
     } else {
       step = `<div class="small" style="margin-top:6px"><span class="ok">✓ Ready.</span>
