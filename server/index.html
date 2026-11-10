@@ -113,7 +113,7 @@
       <input id="name" type="text" placeholder="Name (optional)">
       <button class="primary" type="submit">Add</button>
     </form>
-    <p class="muted small" style="margin:8px 0 0">Saves the first 20 minutes. Short clips repeat seamlessly.</p>
+    <p class="muted small" style="margin:8px 0 0">Saves the first <span id="clipNote">20</span> minutes (change in Settings). Short clips repeat seamlessly.</p>
     <ul id="jobs" class="jobs"></ul>
   </section>
 
@@ -136,6 +136,16 @@
         <button id="placeBtn">Set</button>
       </div>
       <div id="placeOut" class="found"></div>
+    </div>
+    <div style="margin-top:12px">
+      <label class="small">Keep up to
+        <select id="clipMinutes" style="width:auto">
+          <option>5</option><option>10</option><option>15</option><option>20</option>
+          <option>30</option><option>45</option><option>60</option>
+        </select> minutes of each new video</label>
+      <div class="small muted">Longer videos (like 10-hour YouTube loops) are cut to this length and short
+        ones are repeated up to it. Shorter saves disk space; the TV blinks black for a second each
+        time it starts over. Applies to videos you add from now on.</div>
     </div>
   </section>
 
@@ -376,12 +386,17 @@ function renderSettings() {
   for (const k of ["autostart", "sound", "clock", "weather"]) $("#" + k).checked = st[k];
   $("#place").textContent = st.place || "not set";
   $("#units").value = st.units;
+  $("#clipMinutes").value = String(st.clip_minutes || 20);
+  $("#clipNote").textContent = st.clip_minutes || 20;
   $("#weatherBox").classList.toggle("hidden", !st.weather);
 }
 for (const k of ["autostart", "sound", "clock", "weather"]) {
   $("#" + k).onchange = async (e) => { data = await api("/api/settings", { [k]: e.target.checked }); renderAll(); };
 }
 $("#units").onchange = async (e) => { data = await api("/api/settings", { units: e.target.value }); renderAll(); };
+$("#clipMinutes").onchange = async (e) => {
+  data = await api("/api/settings", { clip_minutes: Number(e.target.value) }); renderAll();
+};
 $("#placeBtn").onclick = async () => {
   const out = $("#placeOut");
   const res = await api("/api/geocode?q=" + encodeURIComponent($("#placeQ").value));

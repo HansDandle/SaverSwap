@@ -45,7 +45,8 @@ It uses Roku's built-in local control API (ECP) and Developer Mode installer. Th
 
 ## Good to know
 
-* **Each video is saved as about 20 minutes.** When a Roku video loops it blinks black for about a second, so SaverSwap saves the first 20 minutes and repeats short clips seamlessly until they're that long. The blink then happens once every 20 minutes.
+* **Each video is saved as about 20 minutes** (changeable in Settings, 5–60). When a Roku video loops it blinks black for about a second, so SaverSwap saves the first 20 minutes and repeats short clips seamlessly until they're that long. The blink then happens once every 20 minutes. A 10-hour YouTube video only downloads its first 20 minutes.
+* **Portrait (phone) videos** are fitted to the TV with a blurred copy of themselves filling the sides, instead of black bars.
 * **Disk space:** roughly 0.5–2 GB per scene. The page shows usage, and scenes can be deleted there.
 * **Where videos are kept:** the folder you map to `/data` (Docker), or `--data <folder>` without Docker.
 * **Your own files:** drop `.mp4` files (H.264, named like `snowy_cabin.mp4`) into `data/videos/`, then reload the page.

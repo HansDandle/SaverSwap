@@ -31,8 +31,10 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import rokus
 
-VERSION = "1.4.0"
-LOOP_SECONDS = 1200  # files are repeated to ~20 min: the Roku blinks black for ~1 s on each loop
+VERSION = "1.5.0"
+# Each scene is stored as one file of "clip_minutes" (setting, default 20): long videos are cut
+# to that length, short ones are repeated up to it (the Roku blinks black ~1 s each time a file loops).
+CLIP_MINUTES = (5, 10, 15, 20, 30, 45, 60)
 SEAMLESS_UNDER = 120  # silent clips shorter than this get a crossfaded, seamless loop
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = next((p for p in (os.path.join(HERE, "roku"), os.path.join(HERE, "..", "roku"))
@@ -47,7 +49,7 @@ STARTER = [
     ("Fireplace", "https://assets.mixkit.co/videos/30252/30252-720.mp4"),
     ("Rain on the window", "https://assets.mixkit.co/videos/2846/2846-720.mp4"),
     ("Beach", "https://assets.mixkit.co/videos/1925/1925-720.mp4"),
-    ("Snowfall", "https://assets.mixkit.co/videos/3352/3352-720.mp4"),
+    ("Snowfall", "https://assets.mixkit.co/videos/35040/35040-720.mp4"),
 ]
 
 DEFAULTS = {
@@ -57,6 +59,7 @@ DEFAULTS = {
     "rokus": [],           # [{"ip", "name", "model", "password"}]
     "place": None, "lat": None, "lon": None,  # weather location
     "units": "fahrenheit", "clock": True, "weather": True,
+    "clip_minutes": 20,    # length of each stored scene file (see CLIP_MINUTES)
 }
 
 
@@ -185,10 +188,14 @@ def run_progress(args, job, total=None, timeout=7200):
 
 def probe(path):
     d = json.loads(run(["ffprobe", "-v", "error", "-show_entries",
-                        "stream=codec_type,codec_name,height:format=duration", "-of", "json", path], 120))
+                        "stream=codec_type,codec_name,width,height:stream_side_data=rotation"
+                        ":format=duration", "-of", "json", path], 120))
     v = next(s for s in d["streams"] if s.get("codec_type") == "video")
     has_audio = any(s.get("codec_type") == "audio" for s in d["streams"])
-    return v["codec_name"], int(v.get("height") or 0), float(d["format"]["duration"]), has_audio
+    w, h = int(v.get("width") or 0), int(v.get("height") or 0)
+    if any(abs(int(sd.get("rotation") or 0)) in (90, 270) for sd in v.get("side_data_list", [])):
+        w, h = h, w  # phone video stored sideways with a rotation flag
+    return v["codec_name"], h, float(d["format"]["duration"]), has_audio, w
 
 
 def make_thumb(video, out):
@@ -225,46 +232,53 @@ def add_video(store, job_id, url, name):
             name = unique_name(store, name)
         job["name"] = name
         slug = slugify(name)
+        clip = int(store.state.get("clip_minutes") or 20) * 60
 
         job["status"], job["progress"] = "Downloading", 0
         fmt = ["-f", "bv*[vcodec^=avc1][height<=1080]+ba[ext=m4a]/bv*[height<=1080]+ba"
                      "/b[height<=1080]/bv*[height<=1080]/b", "--merge-output-format", "mp4", "--newline"]
-        if length is None or length > LOOP_SECONDS + 60:
-            # only the first 20 minutes (yt-dlp hands this to ffmpeg, which reports time=)
-            fmt += ["--download-sections", f"*0-{LOOP_SECONDS}"]
+        if length is None or length > clip + 60:
+            # only the first clip_minutes (yt-dlp hands this to ffmpeg, which reports time=)
+            fmt += ["--download-sections", f"*0-{clip}"]
         run_progress(ytdlp + fmt + ["-o", os.path.join(store.tmp, "dl.%(ext)s"), url], job,
-                     total=min(length or LOOP_SECONDS, LOOP_SECONDS))
+                     total=min(length or clip, clip))
         src = os.path.join(store.tmp, next(f for f in os.listdir(store.tmp)
                                            if f.startswith("dl.") and not f.endswith(".part")))
 
         job["status"], job["progress"] = "Converting for the Roku", 0
-        codec, height, dur, has_audio = probe(src)
-        if dur > LOOP_SECONDS + 5:  # short videos were downloaded whole; keep the first 20 minutes
+        codec, height, dur, has_audio, width = probe(src)
+        if dur > clip + 5:  # short videos were downloaded whole; keep the first clip_minutes
             trimmed = os.path.join(store.tmp, "trim.mp4")
-            run(["ffmpeg", "-v", "error", "-y", "-i", src, "-t", str(LOOP_SECONDS), "-c", "copy", trimmed])
-            src, dur = trimmed, float(LOOP_SECONDS)
+            run(["ffmpeg", "-v", "error", "-y", "-i", src, "-t", str(clip), "-c", "copy", trimmed])
+            src, dur = trimmed, float(clip)
         prog = ["-progress", "pipe:1", "-nostats"]
         clean = os.path.join(store.tmp, "clean.mp4")
         audio = ["-map", "0:a:0?", "-c:a", "aac", "-b:a", "160k"]  # sound kept; muted unless "Sound" is on
+        # Portrait (phone) video: fill the 16:9 screen with a blurred, zoomed copy behind it
+        # instead of big black bars.
+        portrait = width and height and width < height
+        scale = ("split[bg][fg];[bg]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,"
+                 "gblur=sigma=40,eq=brightness=-0.08[bgb];[fg]scale=-2:1080[fgs];"
+                 "[bgb][fgs]overlay=(W-w)/2:0" if portrait else "scale=-2:'min(1080,ih)'")
         if not has_audio and dur < SEAMLESS_UNDER:
             # short silent clip: crossfade its end into its start so the repeat is invisible
             fade = min(2.0, dur / 4)
             run_progress(["ffmpeg", "-v", "error", "-y", "-i", src, "-filter_complex",
-                          f"[0:v]fps=30,scale=-2:'min(1080,ih)',format=yuv420p,split[s1][s2];"
+                          f"[0:v]fps=30,{scale},format=yuv420p,split[s1][s2];"
                           f"[s1]trim={fade}:{dur},setpts=PTS-STARTPTS,settb=AVTB,fps=30[a];"
                           f"[s2]trim=0:{fade},setpts=PTS-STARTPTS,settb=AVTB,fps=30[b];"
                           f"[a][b]xfade=transition=fade:duration={fade}:offset={dur - 2 * fade:.3f}[v]",
                           "-map", "[v]", "-an"] + ENC + prog + [clean], job, total=dur - fade)
             dur -= fade
-        elif codec == "h264" and height <= 1080:
+        elif codec == "h264" and height <= 1080 and not portrait:
             run_progress(["ffmpeg", "-v", "error", "-y", "-i", src, "-map", "0:v:0", "-c:v", "copy"]
                          + audio + prog + [clean], job, total=dur)
         else:
-            run_progress(["ffmpeg", "-v", "error", "-y", "-i", src, "-map", "0:v:0",
-                          "-vf", "scale=-2:'min(1080,ih)',fps=30,format=yuv420p"] + ENC + audio + prog + [clean],
-                         job, total=dur)
+            run_progress(["ffmpeg", "-v", "error", "-y", "-i", src, "-filter_complex",
+                          f"[0:v:0]{scale},fps=30,format=yuv420p[v]", "-map", "[v]"]
+                         + ENC + audio + prog + [clean], job, total=dur)
         job["status"], job["progress"] = "Finishing", 100
-        loops = max(0, math.ceil(LOOP_SECONDS / dur) - 1) if dur > 0 else 0
+        loops = max(0, math.ceil(clip / dur) - 1) if dur > 0 else 0
         dest = os.path.join(store.videos, slug + ".mp4")
         run(["ffmpeg", "-v", "error", "-y", "-stream_loop", str(loops), "-i", clean,
              "-c", "copy", "-movflags", "+faststart", dest])
@@ -401,7 +415,8 @@ class Handler(BaseHTTPRequestHandler):
                                   if live["popup"] and live["popup"]["until"] > time.time() else None),
                         "message": (live["message"]["text"]
                                     if live["message"] and live["message"]["until"] > time.time() else None)},
-            "settings": {k: st[k] for k in ("sound", "autostart", "units", "clock", "weather", "place")},
+            "settings": {k: st[k] for k in ("sound", "autostart", "units", "clock", "weather", "place",
+                                            "clip_minutes")},
             "rokus": [{"ip": r["ip"], "name": r["name"], "model": r.get("model", ""),
                        "saved_password": bool(r.get("password"))} for r in st["rokus"]],
             "storage": {"path": self.store.dir, "used_gb": round(used / 1e9, 1),
@@ -566,6 +581,8 @@ class Handler(BaseHTTPRequestHandler):
                     st[k] = body[k]
             if body.get("units") in ("fahrenheit", "celsius"):
                 st["units"] = body["units"]
+            if body.get("clip_minutes") in CLIP_MINUTES:
+                st["clip_minutes"] = body["clip_minutes"]
             if "lat" in body and "lon" in body:
                 try:
                     st["lat"], st["lon"] = float(body["lat"]), float(body["lon"])
