@@ -142,6 +142,8 @@ SHOW_CAMERA_SCHEMA = vol.Schema({
     vol.Optional("seconds", default=30): vol.All(vol.Coerce(int), vol.Range(min=5, max=600)),
     vol.Optional("refresh", default=5): vol.All(vol.Coerce(int), vol.Range(min=1, max=60)),
     vol.Optional("turn_on_tv", default=True): cv.boolean,
+    # True: if this camera is already on the TV, hide it instead (one dashboard button shows and hides)
+    vol.Optional("toggle", default=False): cv.boolean,
 })
 SHOW_MESSAGE_SCHEMA = vol.Schema({
     vol.Required("message"): cv.string,
@@ -162,6 +164,15 @@ def register_services(hass: HomeAssistant) -> None:
     if hass.services.has_service(DOMAIN, "show_camera"):
         return
     camera_tasks: dict[str, asyncio.Task] = {}
+    showing: dict[str, Any] = {}  # {"entity": camera on the TV now, "end": loop time it goes away}
+
+    async def hide_camera() -> None:
+        task = camera_tasks.pop("popup", None)
+        if task:
+            task.cancel()
+        showing.clear()
+        for client in _clients(hass):
+            await client.post("/api/overlay/clear", {"what": "popup"})
 
     async def show_camera(call: ServiceCall) -> None:
         eid = call.data[ATTR_ENTITY_ID]
@@ -171,6 +182,10 @@ def register_services(hass: HomeAssistant) -> None:
         launch = call.data["turn_on_tv"]
 
         loop_ = asyncio.get_running_loop()
+        if (call.data["toggle"] and showing.get("entity") == eid
+                and showing.get("end", 0) > loop_.time()):
+            await hide_camera()
+            return
         end = loop_.time() + seconds
 
         async def send(first: bool) -> None:
@@ -201,6 +216,7 @@ def register_services(hass: HomeAssistant) -> None:
             raise HomeAssistantError(f"Couldn't get a picture from {eid}: {err}") from err
         task = hass.async_create_background_task(refresh_loop(), "saverswap camera refresh")
         camera_tasks["popup"] = task
+        showing.update(entity=eid, end=end)
 
     async def show_message(call: ServiceCall) -> None:
         for client in _clients(hass):
@@ -209,10 +225,15 @@ def register_services(hass: HomeAssistant) -> None:
 
     async def clear(call: ServiceCall) -> None:
         what = call.data["what"]
-        if what in ("all", "camera") and "popup" in camera_tasks:
-            camera_tasks.pop("popup").cancel()
+        if what == "camera":
+            return await hide_camera()
+        if what == "all":
+            task = camera_tasks.pop("popup", None)
+            if task:
+                task.cancel()
+            showing.clear()
         for client in _clients(hass):
-            await client.post("/api/overlay/clear", {"what": {"camera": "popup"}.get(what, what)})
+            await client.post("/api/overlay/clear", {"what": what})
 
     hass.services.async_register(DOMAIN, "show_camera", show_camera, SHOW_CAMERA_SCHEMA)
     hass.services.async_register(DOMAIN, "show_message", show_message, SHOW_MESSAGE_SCHEMA)

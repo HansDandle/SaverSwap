@@ -20,6 +20,10 @@ show_camera:
       default: true
       selector:
         boolean:
+    toggle:
+      default: false
+      selector:
+        boolean:
 show_message:
   fields:
     message:

@@ -56,6 +56,10 @@
         "turn_on_tv": {
           "name": "Bring up SaverSwap",
           "description": "Also open SaverSwap on TVs that are idle (home screen or screensaver). Never interrupts something you're watching."
+        },
+        "toggle": {
+          "name": "Toggle",
+          "description": "If this camera is already on the TV, hide it instead. Lets one dashboard button show and hide it."
         }
       }
     },
