@@ -211,12 +211,32 @@ ENC = ["-pix_fmt", "yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-crf", 
        "-profile:v", "high", "-level", "4.1"]
 
 
+def start_time(url):
+    """Seconds from a link's t=/start= (YouTube style: 180, 180s, 3m, 1h2m3s, or 3:00), else 0."""
+    u = urlparse(url)
+    q = parse_qs(u.query)
+    q.update(parse_qs(u.fragment))
+    raw = (q.get("t") or q.get("start") or [""])[0].strip().lower()
+    if re.fullmatch(r"\d+(\.\d+)?s?", raw):
+        return int(float(raw.rstrip("s")))
+    if re.fullmatch(r"(\d+:){1,2}\d+", raw):
+        secs = 0
+        for part in raw.split(":"):
+            secs = secs * 60 + int(part)
+        return secs
+    m = re.fullmatch(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?", raw)
+    if raw and m:
+        h, mi, s = (int(x or 0) for x in m.groups())
+        return h * 3600 + mi * 60 + s
+    return 0
+
+
 def add_video(store, job_id, url, name):
     job = jobs[job_id]
     try:
         for f in os.listdir(store.tmp):
             os.remove(os.path.join(store.tmp, f))
-        ytdlp = [sys.executable, "-m", "yt_dlp", "--no-playlist", "--js-runtimes", "node,deno"]
+        ytdlp = [sys.executable, "-m", "yt_dlp", "--no-playlist"]  # uses deno (requirements.txt) for YouTube
         job["status"], job["progress"] = "Looking up the video", None
         info = run(ytdlp + ["--skip-download", "--print", "%(title)s\t%(duration)s", url], 300)
         title, _, length = (info.strip().splitlines() or ["Video\tNA"])[0].partition("\t")
@@ -233,15 +253,18 @@ def add_video(store, job_id, url, name):
         job["name"] = name
         slug = slugify(name)
         clip = int(store.state.get("clip_minutes") or 20) * 60
+        start = start_time(url)  # a link with &t=180 starts the clip 3 minutes in
+        if length and start >= length:
+            start = 0
 
         job["status"], job["progress"] = "Downloading", 0
         fmt = ["-f", "bv*[vcodec^=avc1][height<=1080]+ba[ext=m4a]/bv*[height<=1080]+ba"
                      "/b[height<=1080]/bv*[height<=1080]/b", "--merge-output-format", "mp4", "--newline"]
-        if length is None or length > clip + 60:
-            # only the first clip_minutes (yt-dlp hands this to ffmpeg, which reports time=)
-            fmt += ["--download-sections", f"*0-{clip}"]
+        if start or length is None or length > clip + 60:
+            # only clip_minutes from the start point (yt-dlp hands this to ffmpeg, which reports time=)
+            fmt += ["--download-sections", f"*{start}-{start + clip}"]
         run_progress(ytdlp + fmt + ["-o", os.path.join(store.tmp, "dl.%(ext)s"), url], job,
-                     total=min(length or clip, clip))
+                     total=min((length - start) if length else clip, clip))
         src = os.path.join(store.tmp, next(f for f in os.listdir(store.tmp)
                                            if f.startswith("dl.") and not f.endswith(".part")))
 

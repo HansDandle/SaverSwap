@@ -1,7 +1,8 @@
 FROM python:3.12-slim
-# ffmpeg converts videos; nodejs lets yt-dlp solve YouTube's JavaScript challenges
+# ffmpeg converts videos. (deno, from requirements.txt, solves YouTube's JavaScript challenges;
+# Debian's nodejs is too old for current yt-dlp.)
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ffmpeg nodejs \
+ && apt-get install -y --no-install-recommends ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 COPY server/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt

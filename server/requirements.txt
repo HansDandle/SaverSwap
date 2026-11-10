@@ -1,3 +1,5 @@
 yt-dlp[default]
+# JavaScript runtime yt-dlp needs for YouTube (its default; the pip package ships the binary)
+deno
 qrcode
 pypng
